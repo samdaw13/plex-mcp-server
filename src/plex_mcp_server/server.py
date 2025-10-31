@@ -8,11 +8,11 @@ from starlette.requests import Request # type: ignore
 from starlette.responses import StreamingResponse
 
 # Import the main mcp instance from modules
-from modules import mcp, connect_to_plex
+from .modules import mcp, connect_to_plex
 
 # Import all tools to ensure they are registered with MCP
 # Library module functions
-from modules.library import (
+from .modules.library import (
     library_list,
     library_get_stats,
     library_refresh,
@@ -22,7 +22,7 @@ from modules.library import (
     library_get_contents
 )
 # User module functions
-from modules.user import (
+from .modules.user import (
     user_search_users,
     user_get_info,
     user_get_on_deck,
@@ -30,12 +30,12 @@ from modules.user import (
     user_get_statistics
 )
 # Search module functions
-from modules.sessions import (
+from .modules.sessions import (
     sessions_get_active,
     sessions_get_media_playback_history
 )
 # Server module functions
-from modules.server import (
+from .modules.server import (
     server_get_plex_logs,
     server_get_info,
     server_get_bandwidth,
@@ -45,7 +45,7 @@ from modules.server import (
     server_run_butler_task
 )
 # Playlist module functions
-from modules.playlist import (
+from .modules.playlist import (
     playlist_list,
     playlist_get_contents,
     playlist_create,
@@ -57,7 +57,7 @@ from modules.playlist import (
     playlist_copy_to_user
 )
 # Collection module functions
-from modules.collection import (
+from .modules.collection import (
     collection_list,
     collection_create,
     collection_add_to,
@@ -65,7 +65,7 @@ from modules.collection import (
     collection_edit
 )
 # Media module functions
-from modules.media import (
+from .modules.media import (
     media_search,
     media_get_details,
     media_edit_metadata,
@@ -75,7 +75,7 @@ from modules.media import (
     media_list_available_artwork  
 )  
 # Client module functions
-from modules.client import (
+from .modules.client import (
     client_list, 
     client_get_details, 
     client_get_timelines,
@@ -91,29 +91,16 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     sse = SseServerTransport("/messages/")
 
     async def handle_sse(request: Request):
-        sse = SseServerTransport("/messages/")
-
-        async def event_generator():
-            async with sse.connect_sse(
-                request.scope,
-                request.receive,
-                request._send,
-            ) as (read_stream, write_stream):
-                await mcp_server.run(
-                    read_stream,
-                    write_stream,
-                    mcp_server.create_initialization_options(),
-                )
-
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-            }
-        )
+        async with sse.connect_sse(
+            request.scope,
+            request.receive,
+            request._send,
+        ) as (read_stream, write_stream):
+            await mcp_server.run(
+                read_stream,
+                write_stream,
+                mcp_server.create_initialization_options(),
+            )
 
     return Starlette(
         debug=debug,

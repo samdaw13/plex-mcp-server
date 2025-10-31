@@ -1,0 +1,14 @@
+services:
+  plex-mcp-sse:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    ports:
+      - "3001:3001"
+    # Volume mount disabled - use built image instead
+    # For development with live reload, uncomment:
+    # volumes:
+    #   - ./src:/app/src
+    restart: unless-stopped
