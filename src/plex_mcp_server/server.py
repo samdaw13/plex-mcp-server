@@ -1,49 +1,48 @@
-from mcp.server import Server  # type: ignore
-from mcp.server.sse import SseServerTransport  # type: ignore
-from starlette.applications import Starlette  # type: ignore
-from starlette.requests import Request
-from starlette.routing import Mount, Route  # type: ignore
-
-# Import the main mcp instance from modules
-
-# Client module functions
-
-# Collection module functions
-
-# Import all tools to ensure they are registered with MCP
-# Library module functions
-
-# Media module functions
-
-# Playlist module functions
-
-# Server module functions
-
-# Search module functions
-
-# User module functions
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
+from starlette.applications import Starlette
+from starlette.routing import Mount
+from starlette.types import Receive, Scope, Send
 
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
     """Create a Starlette application that can serve the provided mcp server with SSE."""
     sse = SseServerTransport("/messages/")
 
-    async def handle_sse(request: Request):
-        async with sse.connect_sse(
-            request.scope,
-            request.receive,
-            request._send,
-        ) as (read_stream, write_stream):
-            await mcp_server.run(
-                read_stream,
-                write_stream,
-                mcp_server.create_initialization_options(),
+    async def sse_handler(scope: Scope, receive: Receive, send: Send) -> None:
+        """ASGI app for handling SSE connections and message posts."""
+        path = scope.get("path", "/")
+
+        # Handle SSE connection at /sse or /sse/
+        if scope["type"] == "http" and scope["method"] == "GET" and path in ("/sse", "/sse/"):
+            async with sse.connect_sse(scope, receive, send) as (read_stream, write_stream):
+                await mcp_server.run(
+                    read_stream,
+                    write_stream,
+                    mcp_server.create_initialization_options(),
+                )
+        # Handle message posts at /messages/ (as configured in SseServerTransport)
+        elif scope["type"] == "http" and path.startswith("/messages"):
+            await sse.handle_post_message(scope, receive, send)
+        else:
+            # Return 404 for unknown paths
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 404,
+                    "headers": [[b"content-type", b"text/plain"]],
+                }
+            )
+            await send(
+                {
+                    "type": "http.response.body",
+                    "body": b"Not Found",
+                }
             )
 
     return Starlette(
         debug=debug,
         routes=[
-            Route("/sse", endpoint=handle_sse),
-            Mount("/messages/", app=sse.handle_post_message),
+            Mount("/", app=sse_handler),
         ],
     )

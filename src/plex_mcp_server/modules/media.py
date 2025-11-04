@@ -2,14 +2,21 @@ import builtins
 import contextlib
 import json
 import os
+from typing import TYPE_CHECKING, Any, cast
 
-from plexapi.exceptions import NotFound  # type: ignore
+from plexapi.audio import Album, Artist, Track
+from plexapi.base import PlexPartialObject
+from plexapi.exceptions import NotFound
+from plexapi.video import Episode, Movie, Show, Video
 
 from . import connect_to_plex, mcp
 
+if TYPE_CHECKING:
+    from plexapi.video import Season
+
 
 @mcp.tool()
-async def media_search(query: str, content_type: str = None) -> str:
+async def media_search(query: str, content_type: str | None = None) -> str:
     """Search for media across all libraries.
 
     Args:
@@ -89,7 +96,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             )
 
         # Format and organize search results
-        results_by_type = {}
+        results_by_type: dict[str, list[dict[str, Any]]] = {}
         total_count = 0
 
         for search_result in data["MediaContainer"]["SearchResult"]:
@@ -99,12 +106,22 @@ async def media_search(query: str, content_type: str = None) -> str:
             item = search_result["Metadata"]
             item_type = item.get("type", "unknown")
 
+            # Map content_type for filtering
+            content_type_map_filter = {
+                "movie": "movies",
+                "show": "tv",
+                "episode": "tv",
+                "track": "music",
+                "album": "music",
+                "artist": "music",
+            }
+
             # Apply additional filter only when content_type is specified and not comma-separated
             # This is to ensure we only return the exact type the user asked for
             if (
                 content_type
                 and "," not in content_type
-                and content_type not in content_type_map
+                and content_type not in content_type_map_filter
                 and item_type != content_type
             ):
                 continue
@@ -113,7 +130,7 @@ async def media_search(query: str, content_type: str = None) -> str:
             # ensure we only return that specific type
             if (
                 content_type
-                and content_type in content_type_map
+                and content_type in content_type_map_filter
                 and "," not in content_type
                 and content_type != item_type
             ):
@@ -224,7 +241,9 @@ async def media_search(query: str, content_type: str = None) -> str:
 
 @mcp.tool()
 async def media_get_details(
-    media_title: str = None, media_id: int = None, library_name: str = None
+    media_title: str | None = None,
+    media_id: int | None = None,
+    library_name: str | None = None,
 ) -> str:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
 
@@ -246,10 +265,12 @@ async def media_get_details(
         if media_id is not None:
             # If media_id is provided, use it to directly fetch the item
             try:
-                media = plex.fetchItem(media_id)
-                # Get details for the single item
-                details = get_media_details(media)
-                return json.dumps(details, indent=4)
+                media: PlexPartialObject | None = plex.fetchItem(media_id)
+                if media:
+                    details = get_media_details(media)
+                    return json.dumps(details, indent=4)
+                else:
+                    return json.dumps({})
             except Exception as e:
                 return json.dumps(
                     {"error": f"Could not find media with ID {media_id}. Error: {str(e)}"}, indent=4
@@ -274,9 +295,12 @@ async def media_get_details(
                 results = plex.search(query=media_title)
 
                 # If no results or we want to specifically check music libraries
-                if not results or any(
-                    word in media_title.lower()
-                    for word in ["song", "track", "album", "artist", "music"]
+                if not results or (
+                    media_title
+                    and any(
+                        word in media_title.lower()
+                        for word in ["song", "track", "album", "artist", "music"]
+                    )
                 ):
                     # Get all music libraries
                     music_libraries = [
@@ -338,11 +362,13 @@ async def media_get_details(
 
 
 # Helper function to extract media details
-def get_media_details(media):
+def get_media_details(
+    media: PlexPartialObject | Artist | Movie | Video | Show | Episode,
+) -> dict[str, Any]:
     """Extract details from a media object and return as a dictionary."""
 
     # Format duration as HH:MM:SS
-    def format_duration(ms):
+    def format_duration(ms: int | None) -> str | None:
         if not ms:
             return None
         # Convert milliseconds to seconds
@@ -354,12 +380,13 @@ def get_media_details(media):
         # Format as HH:MM:SS
         return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
 
+    added_at_value = getattr(media, "addedAt", None)
     details = {
         "title": getattr(media, "title", "Unknown"),
         "type": getattr(media, "type", "unknown"),
         "id": getattr(media, "ratingKey", None),
-        "added_at": getattr(media, "addedAt", None).strftime("%Y-%m-%d %H:%M:%S")
-        if hasattr(media, "addedAt") and media.addedAt
+        "added_at": added_at_value.strftime("%Y-%m-%d %H:%M:%S")
+        if added_at_value is not None
         else None,
         "rating": getattr(media, "rating", None),
         "content_rating": getattr(media, "contentRating", None),
@@ -371,14 +398,14 @@ def get_media_details(media):
     }
 
     # Add type-specific fields
-    if media.type == "movie":
+    if isinstance(media, Movie) and media.type == "movie":
         details["summary"] = getattr(media, "summary", None) if hasattr(media, "summary") else None
         details["rating"] = (
             getattr(media, "userRating", None)
             if hasattr(media, "userRating")
             else getattr(media, "rating", None)
         )
-    elif media.type == "show":
+    elif isinstance(media, Show) and media.type == "show":
         try:
             details["summary"] = (
                 getattr(media, "summary", None) if hasattr(media, "summary") else None
@@ -402,11 +429,11 @@ def get_media_details(media):
 
             # Add list of seasons with episodes
             if hasattr(media, "seasons") and callable(media.seasons):
-                seasons = media.seasons()
+                seasons: list[Season] = [season for season in media.seasons() if season is not None]
                 seasons_list = []
 
                 for season in seasons:
-                    season_data = {
+                    season_data: dict[str, Any] = {
                         "title": getattr(
                             season, "title", f"Season {getattr(season, 'index', 'Unknown')}"
                         ),
@@ -419,10 +446,14 @@ def get_media_details(media):
                     # Add episodes for this season
                     if hasattr(season, "episodes") and callable(season.episodes):
                         try:
-                            episodes = season.episodes()
+                            episodes: list[Episode] = [
+                                episodes for episodes in season.episodes() if episodes is not None
+                            ]
                             season_data["episodes_count"] = len(episodes)
 
                             for episode in episodes:
+                                if not season_data["episodes"]:
+                                    season_data["episodes"] = []
                                 episode_data = {
                                     "title": getattr(episode, "title", "Unknown"),
                                     "id": getattr(episode, "ratingKey", None),
@@ -443,7 +474,7 @@ def get_media_details(media):
             details["seasons_count"] = 0
             details["episodes_count"] = 0
             details["error_details"] = str(e)
-    elif media.type == "episode":
+    elif isinstance(media, Episode) and media.type == "episode":
         details["show_title"] = getattr(media, "grandparentTitle", None)
         details["season_number"] = getattr(media, "parentIndex", None)
         details["episode_number"] = getattr(media, "index", None)
@@ -457,7 +488,7 @@ def get_media_details(media):
         # Remove studio field for episodes
         if "studio" in details:
             del details["studio"]
-    elif media.type == "artist":
+    elif isinstance(media, Artist) and media.type == "artist":
         try:
             details["summary"] = (
                 getattr(media, "summary", None) if hasattr(media, "summary") else None
@@ -486,7 +517,7 @@ def get_media_details(media):
 
             # Add list of albums
             if hasattr(media, "albums") and callable(media.albums):
-                albums = media.albums()
+                albums: list[Album] = [album for album in media.albums() if album is not None]
                 albums_list = []
                 for album in albums:
                     albums_list.append(
@@ -505,7 +536,7 @@ def get_media_details(media):
             details["albums_count"] = 0
             details["tracks_count"] = 0
             details["error_details"] = str(e)
-    elif media.type == "album":
+    elif isinstance(media, Album) and media.type == "album":
         details["summary"] = getattr(media, "summary", None) if hasattr(media, "summary") else None
         details["artist"] = getattr(media, "parentTitle", "Unknown Artist")
         details["artist_id"] = getattr(media, "parentRatingKey", None)
@@ -567,7 +598,7 @@ def get_media_details(media):
             details["summary"] = None
             details["tracks_count"] = 0
             details["error_details"] = str(e)
-    elif media.type == "track":
+    elif isinstance(media, Track) and media.type == "track":
         details["artist"] = getattr(media, "grandparentTitle", "Unknown Artist")
         details["artist_id"] = getattr(media, "grandparentRatingKey", None)
         details["album"] = getattr(media, "parentTitle", "Unknown Album")
@@ -598,7 +629,7 @@ def get_media_details(media):
             and callable(getattr(media, "album", None))
         ):
             try:
-                album = media.album()
+                album: Album = cast("Album", media.album())  # type: ignore
                 details["year"] = getattr(album, "year", None)
             except Exception:
                 pass
@@ -622,16 +653,16 @@ def get_media_details(media):
 @mcp.tool()
 async def media_edit_metadata(
     media_title: str,
-    library_name: str = None,
-    new_title: str = None,
-    new_summary: str = None,
-    new_rating: float = None,
-    new_release_date: str = None,  # Add this parameter
-    new_genre: str = None,
-    remove_genre: str = None,
-    new_director: str = None,
-    new_studio: str = None,
-    new_tags: list[str] = None,
+    library_name: str | None = None,
+    new_title: str | None = None,
+    new_summary: str | None = None,
+    new_rating: float | None = None,
+    new_release_date: str | None = None,  # Add this parameter
+    new_genre: str | None = None,
+    remove_genre: str | None = None,
+    new_director: str | None = None,
+    new_studio: str | None = None,
+    new_tags: list[str] | None = None,
 ) -> str:
     """Edit metadata for a specific media item.
 
@@ -789,10 +820,10 @@ async def media_edit_metadata(
 
 @mcp.tool()
 async def media_get_artwork(
-    media_title: str = None,
-    media_id: int = None,
-    library_name: str = None,
-    image_types: list[str] = None,
+    media_title: str | None = None,
+    media_id: int | None = None,
+    library_name: str | None = None,
+    image_types: list[str] | None = None,
     output_format: str = "base64",
     output_dir: str = "./",
 ) -> str:
@@ -872,7 +903,7 @@ async def media_get_artwork(
         }
 
         # Extract requested images
-        result = {}
+        result: dict[str, Any] = {}
 
         for img_type in image_types:
             img_type = img_type.lower()
@@ -967,7 +998,9 @@ async def media_get_artwork(
 
 @mcp.tool()
 async def media_delete(
-    media_title: str = None, media_id: int = None, library_name: str = None
+    media_title: str | None = None,
+    media_id: int | None = None,
+    library_name: str | None = None,
 ) -> str:
     """Delete a media item from the Plex library.
 
@@ -1173,10 +1206,10 @@ async def media_delete(
 @mcp.tool()
 async def media_set_artwork(
     media_title: str,
-    library_name: str = None,
+    library_name: str | None = None,
     art_type: str = "poster",
-    filepath: str = None,
-    url: str = None,
+    filepath: str | None = None,
+    url: str | None = None,
     lock: bool = False,
 ) -> str:
     """Set artwork for a specific media item.
@@ -1241,7 +1274,7 @@ async def media_set_artwork(
 
         # Check if the object supports this art type
         upload_method = upload_map.get(art_type)
-        if not hasattr(media, upload_method):
+        if not upload_method or not hasattr(media, upload_method):
             return f"This media item doesn't support setting {art_type} artwork."
 
         # Upload the artwork
@@ -1257,10 +1290,12 @@ async def media_set_artwork(
         # Lock the artwork if requested
         if lock:
             lock_method = lock_map.get(art_type)
-            if hasattr(media, lock_method):
+            if lock_method and hasattr(media, lock_method):
                 lock_fn = getattr(media, lock_method)
                 lock_fn()
                 return f"Successfully set and locked {art_type} artwork for '{media.title}'."
+            else:
+                return f"No lock method found for {art_type} for artwork '{media.title}'."
 
         return f"Successfully set {art_type} artwork for '{media.title}'."
     except Exception as e:
@@ -1269,9 +1304,9 @@ async def media_set_artwork(
 
 @mcp.tool()
 async def media_list_available_artwork(
-    media_title: str = None,
-    media_id: int = None,
-    library_name: str = None,
+    media_title: str | None = None,
+    media_id: int | None = None,
+    library_name: str | None = None,
     art_type: str = "poster",
 ) -> str:
     """List all available artwork for a specific media item.
@@ -1419,7 +1454,7 @@ async def media_list_available_artwork(
                 media = valid_media_results[0]
 
         # Check if the object supports this art type
-        art_method = art_methods.get(art_type)
+        art_method = art_methods.get(art_type, "")
         if not hasattr(media, art_method):
             return json.dumps(
                 {"error": f"This media item doesn't support {art_type} artwork"}, indent=4

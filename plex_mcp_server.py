@@ -1,11 +1,8 @@
 import argparse
 
-import uvicorn  # type: ignore
-from mcp.server import Server  # type: ignore
-from mcp.server.sse import SseServerTransport  # type: ignore
-
-# Import the main mcp instance from modules
-from modules import mcp
+import uvicorn
+from mcp.server import Server
+from mcp.server.sse import SseServerTransport
 
 # Client module functions
 # Collection module functions
@@ -16,10 +13,13 @@ from modules import mcp
 # Server module functions
 # Search module functions
 # User module functions
-from starlette.applications import Starlette  # type: ignore
-from starlette.requests import Request  # type: ignore
+from starlette.applications import Starlette
+from starlette.requests import Request
 from starlette.responses import StreamingResponse
-from starlette.routing import Mount, Route  # type: ignore
+from starlette.routing import Mount, Route
+
+# Import the main mcp instance from modules
+from src.plex_mcp_server.modules import mcp
 
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:

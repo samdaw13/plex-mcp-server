@@ -1,15 +1,20 @@
 import json
 import os
+from typing import TYPE_CHECKING, Any
 
 import requests
-from plexapi.exceptions import NotFound  # type: ignore
+from plexapi.exceptions import NotFound
 
 from . import connect_to_plex, mcp
+
+if TYPE_CHECKING:
+    from plexapi.playlist import Playlist
+    from plexapi.server import PlexServer
 
 
 # Functions for playlists and collections
 @mcp.tool()
-async def playlist_list(library_name: str = None, content_type: str = None) -> str:
+async def playlist_list(library_name: str | None = None, content_type: str | None = None) -> str:
     """List all playlists on the Plex server.
 
     Args:
@@ -18,7 +23,7 @@ async def playlist_list(library_name: str = None, content_type: str = None) -> s
     """
     try:
         plex = connect_to_plex()
-        playlists = []
+        playlists: list[Playlist] = []
 
         # Filter by content type if specified
         if content_type:
@@ -28,9 +33,15 @@ async def playlist_list(library_name: str = None, content_type: str = None) -> s
                     {"error": f"Invalid content type. Valid types are: {', '.join(valid_types)}"},
                     indent=4,
                 )
-            playlists = plex.playlists(playlistType=content_type.lower())
+            playlists = [
+                plex_playlist
+                for plex_playlist in plex.playlists(playlistType=content_type.lower())
+                if plex_playlist is not None
+            ]
         else:
-            playlists = plex.playlists()
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
 
         # Filter by library if specified
         if library_name:
@@ -78,7 +89,10 @@ async def playlist_list(library_name: str = None, content_type: str = None) -> s
 
 @mcp.tool()
 async def playlist_create(
-    playlist_title: str, item_titles: list[str], library_name: str = None, summary: str = None
+    playlist_title: str,
+    item_titles: list[str],
+    library_name: str | None = None,
+    summary: str | None = None,
 ) -> str:
     """Create a new playlist with specified items.
 
@@ -136,10 +150,10 @@ async def playlist_create(
 
 @mcp.tool()
 async def playlist_edit(
-    playlist_title: str = None,
-    playlist_id: int = None,
-    new_title: str = None,
-    new_summary: str = None,
+    playlist_title: str | None = None,
+    playlist_id: int | None = None,
+    new_title: str | None = None,
+    new_summary: str | None = None,
 ) -> str:
     """Edit a playlist's details such as title and summary.
 
@@ -159,7 +173,7 @@ async def playlist_edit(
             )
 
         # Find the playlist
-        playlist = None
+        playlist: Playlist | None = None
         original_title = None
 
         # If playlist_id is provided, use it to directly fetch the playlist
@@ -170,7 +184,11 @@ async def playlist_edit(
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -182,8 +200,16 @@ async def playlist_edit(
                 return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
         else:
             # Search by title
-            playlists = plex.playlists()
-            matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
+            matching_playlists: list[Playlist] = [
+                p for p in playlists if p.title.lower() == playlist_title.lower()
+            ]
 
             if not matching_playlists:
                 return json.dumps(
@@ -245,10 +271,10 @@ async def playlist_edit(
 
 @mcp.tool()
 async def playlist_upload_poster(
-    playlist_title: str = None,
-    playlist_id: int = None,
-    poster_url: str = None,
-    poster_filepath: str = None,
+    playlist_title: str | None = None,
+    playlist_id: int | None = None,
+    poster_url: str | None = None,
+    poster_filepath: str | None = None,
 ) -> str:
     """Upload a poster image for a playlist.
 
@@ -284,7 +310,11 @@ async def playlist_upload_poster(
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -295,7 +325,13 @@ async def playlist_upload_poster(
                 return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
         else:
             # Search by title
-            playlists = plex.playlists()
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
@@ -359,13 +395,20 @@ async def playlist_upload_poster(
                     {"error": f"Error uploading from file: {str(file_error)}"}, indent=4
                 )
 
+        # This should never be reached due to validation above, but mypy requires it
+        return json.dumps(
+            {"error": "Neither poster_url nor poster_filepath was provided"}, indent=4
+        )
+
     except Exception as e:
         return json.dumps({"error": str(e)}, indent=4)
 
 
 @mcp.tool()
 async def playlist_copy_to_user(
-    playlist_title: str = None, playlist_id: int = None, username: str = None
+    playlist_title: str | None = None,
+    playlist_id: int | None = None,
+    username: str | None = None,
 ) -> str:
     """Copy a playlist to another user account.
 
@@ -401,7 +444,11 @@ async def playlist_copy_to_user(
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -419,7 +466,13 @@ async def playlist_copy_to_user(
                 )
         else:
             # Search by title
-            playlists = plex.playlists()
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
@@ -482,10 +535,10 @@ async def playlist_copy_to_user(
 
 @mcp.tool()
 async def playlist_add_to(
-    playlist_title: str = None,
-    playlist_id: int = None,
-    item_titles: list[str] = None,
-    item_ids: list[int] = None,
+    playlist_title: str | None = None,
+    playlist_id: int | None = None,
+    item_titles: list[str] | None = None,
+    item_ids: list[int] | None = None,
 ) -> str:
     """Add items to a playlist.
 
@@ -521,7 +574,11 @@ async def playlist_add_to(
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -532,7 +589,13 @@ async def playlist_add_to(
                 return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
         else:
             # Search by title
-            playlists = plex.playlists()
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
@@ -561,8 +624,8 @@ async def playlist_add_to(
             playlist = matching_playlists[0]
 
         # Find items to add
-        items_to_add = []
-        not_found = []
+        items_to_add: list[Any] = []
+        not_found: list[str | dict[str, Any]] = []
 
         # If we have item IDs, try to add by ID first
         if item_ids and len(item_ids) > 0:
@@ -660,7 +723,9 @@ async def playlist_add_to(
 
 @mcp.tool()
 async def playlist_remove_from(
-    playlist_title: str = None, playlist_id: int = None, item_titles: list[str] = None
+    playlist_title: str | None = None,
+    playlist_id: int | None = None,
+    item_titles: list[str] | None = None,
 ) -> str:
     """Remove items from a playlist.
 
@@ -694,7 +759,11 @@ async def playlist_remove_from(
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -705,7 +774,13 @@ async def playlist_remove_from(
                 return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
         else:
             # Search by title
-            playlists = plex.playlists()
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
@@ -785,7 +860,7 @@ async def playlist_remove_from(
 
 
 @mcp.tool()
-async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -> str:
+async def playlist_delete(playlist_title: str | None = None, playlist_id: int | None = None) -> str:
     """Delete a playlist.
 
     Args:
@@ -812,7 +887,11 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -
                     playlist = plex.fetchItem(playlist_id)
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
+                    all_playlists = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
@@ -823,7 +902,13 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -
                 return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
         else:
             # Search by title
-            playlists = plex.playlists()
+            if not playlist_title:
+                return json.dumps(
+                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                )
+            playlists = [
+                plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+            ]
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
@@ -865,7 +950,9 @@ async def playlist_delete(playlist_title: str = None, playlist_id: int = None) -
 
 
 @mcp.tool()
-async def playlist_get_contents(playlist_title: str = None, playlist_id: int = None) -> str:
+async def playlist_get_contents(
+    playlist_title: str | None = None, playlist_id: int | None = None
+) -> str:
     """Get the contents of a playlist.
 
     Args:
@@ -876,7 +963,7 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
         JSON object containing the playlist contents
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
@@ -887,15 +974,20 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
         # If playlist_id is provided, use it to directly fetch the playlist
         if playlist_id:
             try:
-                playlist = None
+                playlist: Playlist | None = None
                 # Try fetching by ratingKey first
                 try:
                     playlist = plex.fetchItem(playlist_id)
-                    print(playlist.items())
                 except Exception:
                     # If that fails, try finding by key in all playlists
-                    all_playlists = plex.playlists()
-                    playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
+                    playlists_for_id_search: list[Playlist] = [
+                        plex_playlist
+                        for plex_playlist in plex.playlists()
+                        if plex_playlist is not None
+                    ]
+                    playlist = next(
+                        (p for p in playlists_for_id_search if p.ratingKey == playlist_id), None
+                    )
 
                 if not playlist:
                     return json.dumps(
@@ -914,8 +1006,14 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
                     )
 
         # If we get here, we're searching by title
-        all_playlists = plex.playlists()
-        matching_playlists = [p for p in all_playlists if p.title.lower() == playlist_title.lower()]
+        all_playlists: list[Playlist] = [
+            plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
+        ]
+        matching_playlists = [
+            p
+            for p in all_playlists
+            if playlist_title is not None and p.title.lower() == playlist_title.lower()
+        ]
 
         # If no matching playlists
         if not matching_playlists:
@@ -948,7 +1046,7 @@ async def playlist_get_contents(playlist_title: str = None, playlist_id: int = N
         )
 
 
-def get_playlist_contents(playlist):
+def get_playlist_contents(playlist: Any) -> str:
     """Helper function to get formatted playlist contents."""
     print(playlist)
     try:

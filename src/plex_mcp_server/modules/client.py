@@ -5,10 +5,17 @@ Provides tools to connect to clients and control media playback.
 
 import json
 import time
+from typing import TYPE_CHECKING
 
 from plexapi.exceptions import NotFound
 
 from . import connect_to_plex, mcp
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from plexapi.base import PlexSession
+    from plexapi.server import PlexServer
 
 
 @mcp.tool()
@@ -22,7 +29,7 @@ async def client_list(include_details: bool = True) -> str:
         List of client names or detailed info dictionaries
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
         clients = plex.clients()
 
         # Also get session clients which may not appear in clients()
@@ -99,7 +106,7 @@ async def client_get_details(client_name: str) -> str:
         Dictionary containing client details
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
 
         # Get regular clients
         regular_clients = plex.clients()
@@ -110,8 +117,10 @@ async def client_get_details(client_name: str) -> str:
 
         # Extract clients from sessions
         for session in sessions:
-            if hasattr(session, "player") and session.player:
-                session_clients.append(session.player)
+            if hasattr(session, "player"):
+                player = getattr(session, "player", None)
+                if player is not None:
+                    session_clients.append(player)
 
         # Try to find the client first in regular clients
         client = None
@@ -186,8 +195,10 @@ async def client_get_timelines(client_name: str) -> str:
 
         # Extract clients from sessions
         for session in sessions:
-            if hasattr(session, "player") and session.player:
-                session_clients.append(session.player)
+            if hasattr(session, "player"):
+                player = getattr(session, "player", None)
+                if player is not None:
+                    session_clients.append(player)
 
         # Try to find the client first in regular clients
         client = None
@@ -222,30 +233,26 @@ async def client_get_timelines(client_name: str) -> str:
             if timeline is None:
                 # Check if this client has an active session
                 for session in sessions:
+                    player = getattr(session, "player", None)
                     if (
-                        hasattr(session, "player")
-                        and session.player
-                        and hasattr(session.player, "machineIdentifier")
+                        player is not None
+                        and hasattr(player, "machineIdentifier")
                         and hasattr(client, "machineIdentifier")
-                        and session.player.machineIdentifier == client.machineIdentifier
+                        and player.machineIdentifier == client.machineIdentifier
                     ):
                         # Use session information instead
+                        view_offset = getattr(session, "viewOffset", 0)
+                        duration = getattr(session, "duration", 0)
                         session_data = {
-                            "state": session.player.state
-                            if hasattr(session.player, "state")
-                            else "Unknown",
-                            "time": session.viewOffset if hasattr(session, "viewOffset") else 0,
-                            "duration": session.duration if hasattr(session, "duration") else 0,
+                            "state": getattr(player, "state", "Unknown"),
+                            "time": view_offset,
+                            "duration": duration,
                             "progress": round(
-                                (session.viewOffset / session.duration * 100)
-                                if hasattr(session, "viewOffset")
-                                and hasattr(session, "duration")
-                                and session.duration
-                                else 0,
+                                (view_offset / duration * 100) if duration else 0,
                                 2,
                             ),
-                            "title": session.title if hasattr(session, "title") else "Unknown",
-                            "type": session.type if hasattr(session, "type") else "Unknown",
+                            "title": getattr(session, "title", "Unknown"),
+                            "type": getattr(session, "type", "Unknown"),
                         }
 
                         return json.dumps(
@@ -299,30 +306,26 @@ async def client_get_timelines(client_name: str) -> str:
         except Exception:
             # Check if there's an active session for this client
             for session in sessions:
+                player = getattr(session, "player", None)
                 if (
-                    hasattr(session, "player")
-                    and session.player
-                    and hasattr(session.player, "machineIdentifier")
+                    player is not None
+                    and hasattr(player, "machineIdentifier")
                     and hasattr(client, "machineIdentifier")
-                    and session.player.machineIdentifier == client.machineIdentifier
+                    and player.machineIdentifier == client.machineIdentifier
                 ):
                     # Use session information instead
+                    view_offset = getattr(session, "viewOffset", 0)
+                    duration = getattr(session, "duration", 0)
                     session_data = {
-                        "state": session.player.state
-                        if hasattr(session.player, "state")
-                        else "Unknown",
-                        "time": session.viewOffset if hasattr(session, "viewOffset") else 0,
-                        "duration": session.duration if hasattr(session, "duration") else 0,
+                        "state": getattr(player, "state", "Unknown"),
+                        "time": view_offset,
+                        "duration": duration,
                         "progress": round(
-                            (session.viewOffset / session.duration * 100)
-                            if hasattr(session, "viewOffset")
-                            and hasattr(session, "duration")
-                            and session.duration
-                            else 0,
+                            (view_offset / duration * 100) if duration else 0,
                             2,
                         ),
-                        "title": session.title if hasattr(session, "title") else "Unknown",
-                        "type": session.type if hasattr(session, "type") else "Unknown",
+                        "title": getattr(session, "title", "Unknown"),
+                        "type": getattr(session, "type", "Unknown"),
                     }
 
                     return json.dumps(
@@ -357,10 +360,12 @@ async def client_get_active() -> str:
         List of active clients with their playback status
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
 
         # Get all sessions
-        sessions = plex.sessions()
+        sessions: Sequence[PlexSession] = [
+            plex_session for plex_session in plex.sessions() if plex_session is not None
+        ]
 
         if not sessions:
             return json.dumps(
@@ -375,34 +380,31 @@ async def client_get_active() -> str:
         active_clients = []
 
         for session in sessions:
-            if hasattr(session, "player") and session.player:
-                player = session.player
-
+            player = getattr(session, "player", None)
+            if player is not None:
                 # Get media information
                 media_info = {
-                    "title": session.title if hasattr(session, "title") else "Unknown",
-                    "type": session.type if hasattr(session, "type") else "Unknown",
+                    "title": getattr(session, "title", "Unknown"),
+                    "type": getattr(session, "type", "Unknown"),
                 }
 
                 # Add additional info based on media type
-                if hasattr(session, "type"):
-                    if session.type == "episode":
-                        media_info["show"] = getattr(session, "grandparentTitle", "Unknown Show")
-                        media_info["season"] = getattr(session, "parentTitle", "Unknown Season")
-                        media_info["seasonEpisode"] = (
-                            f"S{getattr(session, 'parentIndex', '?')}E{getattr(session, 'index', '?')}"
-                        )
-                    elif session.type == "movie":
-                        media_info["year"] = getattr(session, "year", "Unknown")
+                session_type = getattr(session, "type", None)
+                if session_type == "episode":
+                    media_info["show"] = getattr(session, "grandparentTitle", "Unknown Show")
+                    media_info["season"] = getattr(session, "parentTitle", "Unknown Season")
+                    media_info["seasonEpisode"] = (
+                        f"S{getattr(session, 'parentIndex', '?')}E{getattr(session, 'index', '?')}"
+                    )
+                elif session_type == "movie":
+                    media_info["year"] = getattr(session, "year", "Unknown")
 
                 # Calculate progress if possible
                 progress = None
-                if (
-                    hasattr(session, "viewOffset")
-                    and hasattr(session, "duration")
-                    and session.duration
-                ):
-                    progress = round((session.viewOffset / session.duration) * 100, 1)
+                view_offset = getattr(session, "viewOffset", None)
+                duration = getattr(session, "duration", None)
+                if view_offset is not None and duration is not None and duration:
+                    progress = round((view_offset / duration) * 100, 1)
 
                 # Get user info
                 username = "Unknown User"
@@ -445,9 +447,9 @@ async def client_get_active() -> str:
 @mcp.tool()
 async def client_start_playback(
     media_title: str,
-    client_name: str = None,
+    client_name: str | None = None,
     offset: int = 0,
-    library_name: str = None,
+    library_name: str | None = None,
     use_external_player: bool = False,
 ) -> str:
     """Start playback of media on a specified client.
@@ -616,7 +618,7 @@ async def client_start_playback(
 
 @mcp.tool()
 async def client_control_playback(
-    client_name: str, action: str, parameter: int = None, media_type: str = "video"
+    client_name: str, action: str, parameter: int | None = None, media_type: str = "video"
 ) -> str:
     """Control playback on a specified client.
 
@@ -733,6 +735,10 @@ async def client_control_playback(
                 client.unmute()
             elif action == "setVolume":
                 # Parameter should be 0-100
+                if parameter is None:
+                    return json.dumps(
+                        {"status": "error", "message": "Volume parameter is required"}
+                    )
                 if parameter < 0 or parameter > 100:
                     return json.dumps(
                         {"status": "error", "message": "Volume must be between 0 and 100"}
@@ -877,9 +883,9 @@ async def client_navigate(client_name: str, action: str) -> str:
 @mcp.tool()
 async def client_set_streams(
     client_name: str,
-    audio_stream_id: str = None,
-    subtitle_stream_id: str = None,
-    video_stream_id: str = None,
+    audio_stream_id: str | None = None,
+    subtitle_stream_id: str | None = None,
+    video_stream_id: str | None = None,
 ) -> str:
     """Set audio, subtitle, or video streams for current playback on a client.
 
@@ -920,7 +926,9 @@ async def client_set_streams(
             timeline = client.timeline
             if timeline is None or not hasattr(timeline, "state") or timeline.state != "playing":
                 # Check active sessions to see if this client has a session
-                sessions = plex.sessions()
+                sessions: Sequence[PlexSession] = [
+                    plex_session for plex_session in plex.sessions() if plex_session is not None
+                ]
                 client_session = None
 
                 for session in sessions:

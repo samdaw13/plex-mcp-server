@@ -2,29 +2,25 @@ import json
 import os
 import time
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 import requests
-from plexapi.server import PlexServer  # type: ignore
+from dotenv import load_dotenv
+from plexapi.myplex import MyPlexAccount
+from plexapi.server import PlexServer
 
 from . import connect_to_plex, mcp
 
-try:
-    from dotenv import load_dotenv  # type: ignore
+if TYPE_CHECKING:
+    from plexapi.myplex import MyPlexUser
 
-    # Load environment variables from .env file
-    load_dotenv()
-    PLEX_USERNAME = os.environ.get("PLEX_USERNAME", None)
-    print("Successfully loaded environment variables from .env file")
-except ImportError:
-    print(
-        "Warning: python-dotenv not installed. Environment variables won't be loaded from .env file."
-    )
-    print("Install with: pip install python-dotenv")
+load_dotenv()
+PLEX_USERNAME = os.environ.get("PLEX_USERNAME", None)
+print("Successfully loaded environment variables from .env file")
 
 
 @mcp.tool()
-async def user_search_users(search_term: str = None) -> str:
+async def user_search_users(search_term: str | None = None) -> str:
     """Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided.
 
     Args:
@@ -34,19 +30,28 @@ async def user_search_users(search_term: str = None) -> str:
         plex = connect_to_plex()
 
         # Get account associated with the token
-        account = plex.myPlexAccount()
+        account: MyPlexAccount = plex.myPlexAccount()
 
         # Get list of all friends (shared users)
-        all_users = account.users()
+        all_users: list[MyPlexUser | MyPlexAccount] = cast(
+            "list[MyPlexUser | MyPlexAccount]", account.users()
+        )
 
         # Add the owner's account to be searched as well
-        all_users.append(account)
+        if account and isinstance(account, MyPlexAccount):
+            all_users.append(account)
 
         if search_term:
             # Search for users that match the search term
             found_users = []
             for user in all_users:
-                username = user.username.lower() if hasattr(user, "username") else ""
+                username = (
+                    user.username.lower()
+                    if user.username
+                    else ""
+                    if hasattr(user, "username")
+                    else ""
+                )
                 email = user.email.lower() if hasattr(user, "email") else ""
                 title = user.title.lower() if hasattr(user, "title") else ""
 
@@ -61,7 +66,11 @@ async def user_search_users(search_term: str = None) -> str:
                 return json.dumps({"message": f"No users found matching '{search_term}'."})
 
             # Format the output for found users
-            result = {"searchTerm": search_term, "usersFound": len(found_users), "users": []}
+            result: dict[str, Any] = {
+                "searchTerm": search_term,
+                "usersFound": len(found_users),
+                "users": [],
+            }
 
             for user in found_users:
                 is_owner = user.username == account.username
@@ -122,7 +131,7 @@ async def user_search_users(search_term: str = None) -> str:
 
 
 @mcp.tool()
-async def user_get_info(username: str = PLEX_USERNAME) -> str:
+async def user_get_info(username: str | None = PLEX_USERNAME) -> str:
     """Get detailed information about a specific Plex user.
 
     Args:
@@ -132,7 +141,7 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
         plex = connect_to_plex()
 
         # Get account associated with the token
-        account = plex.myPlexAccount()
+        account: MyPlexAccount = cast("MyPlexAccount", plex.myPlexAccount())
 
         # Check if the username is the owner
         if username == account.username:
@@ -148,14 +157,32 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
 
             if account.subscriptionActive:
                 result["subscription"]["features"] = account.subscriptionFeatures
+            # Get user's devices if available
+            if hasattr(account, "devices") and callable(account.devices):
+                try:
+                    devices = account.devices()
+                    if devices:
+                        result["devices"] = []
+                        for device in devices:
+                            device_data = {"name": device.name, "platform": device.platform}
+                            if hasattr(device, "clientIdentifier"):
+                                device_data["clientId"] = device.clientIdentifier
+                            if hasattr(device, "createdAt"):
+                                device_data["createdAt"] = str(device.createdAt)
+                            if hasattr(device, "lastSeenAt"):
+                                device_data["lastSeenAt"] = str(device.lastSeenAt)
+                            result["devices"].append(device_data)
+                except Exception:
+                    result["devices"] = None
 
             result["joinedAt"] = str(account.joinedAt)
 
             return json.dumps(result)
 
         # Search for the user in the friends list
-        target_user = None
-        for user in account.users():
+        target_user: MyPlexUser | None = None
+        all_users: list[MyPlexUser] = cast("list[MyPlexUser]", account.users())
+        for user in all_users:
             if user.username == username:
                 target_user = user
                 break
@@ -182,31 +209,13 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
                         server_data["libraries"].append(section.title)
                     result["serverAccess"].append(server_data)
 
-        # Get user's devices if available
-        if hasattr(target_user, "devices") and callable(target_user.devices):
-            try:
-                devices = target_user.devices()
-                if devices:
-                    result["devices"] = []
-                    for device in devices:
-                        device_data = {"name": device.name, "platform": device.platform}
-                        if hasattr(device, "clientIdentifier"):
-                            device_data["clientId"] = device.clientIdentifier
-                        if hasattr(device, "createdAt"):
-                            device_data["createdAt"] = str(device.createdAt)
-                        if hasattr(device, "lastSeenAt"):
-                            device_data["lastSeenAt"] = str(device.lastSeenAt)
-                        result["devices"].append(device_data)
-            except Exception:
-                result["devices"] = None
-
         return json.dumps(result)
     except Exception as e:
         return json.dumps({"error": f"Error getting user info: {str(e)}"})
 
 
 @mcp.tool()
-async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
+async def user_get_on_deck(username: str | None = PLEX_USERNAME) -> str:
     """Get on deck (in progress) media for a specific user.
 
     Args:
@@ -216,7 +225,13 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
         plex = connect_to_plex()
 
         # Try to switch to the user account to get their specific on-deck items
-        if username.lower() == plex.myPlexAccount().username.lower():
+        if (
+            username.lower()
+            if username
+            else plex.myPlexAccount().username.lower() == ""
+            if username
+            else ""
+        ):
             # This is the main account, use server directly
             on_deck_items = plex.library.onDeck()
         else:
@@ -227,7 +242,7 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
                 # Find the user in the shared users
                 target_user = None
                 for user in account.users():
-                    if (
+                    if username and (
                         user.username.lower() == username.lower()
                         or user.title.lower() == username.lower()
                     ):
@@ -255,7 +270,7 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
         if not on_deck_items:
             return json.dumps({"message": f"No on-deck items found for user '{username}'."})
 
-        result = {"username": username, "count": len(on_deck_items), "items": []}
+        result: dict[str, Any] = {"username": username, "count": len(on_deck_items), "items": []}
 
         for item in on_deck_items:
             media_type = getattr(item, "type", "unknown")
@@ -295,7 +310,7 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
 
 @mcp.tool()
 async def user_get_watch_history(
-    username: str = PLEX_USERNAME, limit: int = 10, content_type: str = None
+    username: str | None = PLEX_USERNAME, limit: int = 10, content_type: str | None = None
 ) -> str:
     """Get recent watch history for a specific user.
 
@@ -310,7 +325,7 @@ async def user_get_watch_history(
 
         # Track items we've already seen to avoid duplicates when expanding search
         seen_item_ids = set()
-        filtered_items = []
+        filtered_items: list[Any] = []
         current_search_limit = limit * 2  # Start with 2x the requested limit
         max_attempts = 4  # Maximum number of search expansions to prevent infinite loops
         attempt = 0
@@ -319,13 +334,13 @@ async def user_get_watch_history(
             attempt += 1
 
             # For the main account owner
-            if username.lower() == account.username.lower():
+            if username.lower() if username else account.username.lower() == "" if username else "":
                 history_items = plex.history(maxresults=current_search_limit)
             else:
                 # For a different user, find them in shared users
                 target_user = None
                 for user in account.users():
-                    if (
+                    if username and (
                         user.username.lower() == username.lower()
                         or user.title.lower() == username.lower()
                     ):
@@ -378,7 +393,7 @@ async def user_get_watch_history(
             return json.dumps({"message": message})
 
         # Format the results
-        result = {
+        result: dict[str, Any] = {
             "username": username,
             "count": len(filtered_items),
             "requestedLimit": limit,
@@ -418,7 +433,9 @@ async def user_get_watch_history(
 
 
 @mcp.tool()
-async def user_get_statistics(time_period: str = "last_24_hours", username: str = None) -> str:
+async def user_get_statistics(
+    time_period: str = "last_24_hours", username: str | None = None
+) -> str:
     """Get statistics about user watch activity over different time periods.
 
     Args:
@@ -492,21 +509,30 @@ async def user_get_statistics(time_period: str = "last_24_hours", username: str 
             account = plex.myPlexAccount()
 
             # Check if the username matches the owner
-            if username.lower() == account.username.lower():
+            if username.lower() if username else account.username.lower() == "" if username else "":
                 # Find the owner's account ID in the account list
                 for acc in account_list:
-                    if acc.get("name").lower() == username.lower():
+                    if acc.get("name").lower() == username.lower() if username else "":
                         target_account_id = acc.get("id")
                         break
             else:
                 # Check shared users
                 for user in account.users():
-                    if user.username.lower() == username.lower() or (
-                        hasattr(user, "title") and user.title.lower() == username.lower()
+                    if (
+                        user.username.lower()
+                        if username
+                        else username.lower() == ""
+                        if username
+                        else ""
+                        or (
+                            hasattr(user, "title") and user.title.lower() == username.lower()
+                            if username
+                            else ""
+                        )
                     ):
                         # Find this user's account ID in the account list
                         for acc in account_list:
-                            if acc.get("name").lower() == user.username.lower():
+                            if acc.get("name").lower() == user.username.lower() if username else "":
                                 target_account_id = acc.get("id")
                                 break
                         break

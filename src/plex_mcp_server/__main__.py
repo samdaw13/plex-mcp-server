@@ -2,7 +2,7 @@
 
 import os
 
-import uvicorn  # type: ignore
+import uvicorn
 
 # Import the main mcp instance from modules
 from .modules import mcp
@@ -12,7 +12,7 @@ from .modules import mcp
 from .server import create_starlette_app
 
 
-def main():
+def main() -> None:
     """Main entry point for the application."""
     # Get configuration from environment variables
     host = os.environ.get("FASTMCP_HOST", "0.0.0.0")

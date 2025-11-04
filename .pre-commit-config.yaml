@@ -9,3 +9,21 @@ repos:
         args: [--fix]
       # Run the formatter
       - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.13.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-requests>=2.31.0
+        # Run only on staged files for faster commits
+        pass_filenames: true
+        # Only run on Python files in src
+        files: ^src/.*\.py$
+
+  - repo: https://github.com/RobertCraigie/pyright-python
+    rev: v1.1.407
+    hooks:
+      - id: pyright
+        # Run only on Python files in src
+        files: ^src/.*\.py$
