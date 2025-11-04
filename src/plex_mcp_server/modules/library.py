@@ -1,19 +1,27 @@
 import asyncio
 import json
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 import aiohttp
-from plexapi.exceptions import NotFound  # type: ignore
+from aiohttp import ClientSession
+from plexapi.exceptions import NotFound
+from plexapi.server import PlexServer
 
 from . import connect_to_plex, mcp
 
+if TYPE_CHECKING:
+    from plexapi.library import Library
 
-def get_plex_headers(plex):
+
+def get_plex_headers(plex: PlexServer) -> dict[str, Any]:
     """Get standard Plex headers for HTTP requests"""
     return {"X-Plex-Token": plex._token, "Accept": "application/json"}
 
 
-async def async_get_json(session, url, headers):
+async def async_get_json(
+    session: ClientSession, url: str, headers: dict[str, Any]
+) -> dict[str, Any]:
     """Helper function to make async HTTP requests"""
     async with session.get(url, headers=headers) as response:
         return await response.json()
@@ -24,7 +32,8 @@ async def library_list() -> str:
     """List all available libraries on the Plex server."""
     try:
         plex = connect_to_plex()
-        libraries = plex.library.sections()
+        plex_library: Library = plex.library
+        libraries = plex_library.sections()
 
         if not libraries:
             return json.dumps({"message": "No libraries found on your Plex server."})
@@ -54,7 +63,7 @@ async def library_get_stats(library_name: str) -> str:
     """
     try:
         plex = connect_to_plex()
-        base_url = plex._baseurl
+        base_url: str = str(plex._baseurl)
         headers = get_plex_headers(plex)
 
         async with aiohttp.ClientSession() as session:
@@ -100,10 +109,10 @@ async def library_get_stats(library_name: str) -> str:
                 }
 
                 # Get genres, directors, studios stats
-                genres = {}
-                directors = {}
-                studios = {}
-                decades = {}
+                genres: dict[str, int] = {}
+                directors: dict[str, int] = {}
+                studios: dict[str, int] = {}
+                decades: dict[int, int] = {}
 
                 for movie in all_data.get("Metadata", []):
                     # Process genres
@@ -211,11 +220,11 @@ async def library_get_stats(library_name: str) -> str:
                 }
 
                 # Track data for statistics
-                all_genres = {}
-                all_years = {}
-                top_artists = {}
-                top_albums = {}
-                audio_formats = {}
+                all_genres: dict[str, int] = {}
+                all_years: dict[int, int] = {}
+                top_artists: dict[str, int] = {}
+                top_albums: dict[str, int] = {}
+                audio_formats: dict[str, int] = {}
 
                 # Process artists one by one for accurate stats
                 for artist in all_data.get("Metadata", []):
@@ -315,7 +324,7 @@ async def library_get_stats(library_name: str) -> str:
 
 
 @mcp.tool()
-async def library_refresh(library_name: str = None) -> str:
+async def library_refresh(library_name: str | None = None) -> str:
     """Refresh a specific library or all libraries.
 
     Args:
@@ -361,7 +370,7 @@ async def library_refresh(library_name: str = None) -> str:
 
 
 @mcp.tool()
-async def library_scan(library_name: str, path: str = None) -> str:
+async def library_scan(library_name: str, path: str | None = None) -> str:
     """Scan a specific library or part of a library.
 
     Args:
@@ -489,7 +498,7 @@ async def library_get_details(library_name: str) -> str:
 
 
 @mcp.tool()
-async def library_get_recently_added(count: int = 50, library_name: str = None) -> str:
+async def library_get_recently_added(count: int = 50, library_name: str | None = None) -> str:
     """Get recently added media across all libraries or in a specific library.
 
     Args:
@@ -526,8 +535,10 @@ async def library_get_recently_added(count: int = 50, library_name: str = None) 
             # Sort by date added (newest first) and limit to count
             if recent:
                 try:
+                    from datetime import datetime
+
                     recent = sorted(
-                        recent, key=lambda x: getattr(x, "addedAt", None), reverse=True
+                        recent, key=lambda x: getattr(x, "addedAt", datetime.min), reverse=True
                     )[:count]
                 except Exception:
                     # If sorting fails, just take the first 'count' items
@@ -537,7 +548,7 @@ async def library_get_recently_added(count: int = 50, library_name: str = None) 
             return json.dumps({"message": "No recently added items found."})
 
         # Prepare the result
-        result = {
+        result: dict[str, Any] = {
             "count": len(recent),
             "requestedCount": count,
             "library": library_name if library_name else "All Libraries",
@@ -633,7 +644,7 @@ async def library_get_contents(library_name: str) -> str:
     """
     try:
         plex = connect_to_plex()
-        base_url = plex._baseurl
+        base_url: str = str(plex._baseurl)
         headers = get_plex_headers(plex)
 
         async with aiohttp.ClientSession() as session:
@@ -673,7 +684,7 @@ async def library_get_contents(library_name: str) -> str:
                     duration = item.get("duration", 0)
                     # Convert duration from milliseconds to hours and minutes
                     hours, remainder = divmod(duration // 1000, 3600)
-                    minutes, seconds = divmod(remainder, 60)
+                    minutes, _ = divmod(remainder, 60)
 
                     # Get media info
                     media_info = {}

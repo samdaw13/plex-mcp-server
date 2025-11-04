@@ -30,10 +30,13 @@ package = true
 
 [dependency-groups]
 dev = [
+    "mypy>=1.13.0",
     "pre-commit>=4.3.0",
+    "pyright>=1.1.390",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
     "ruff>=0.14.3",
+    "types-requests>=2.31.0",
 ]
 
 [tool.ruff]
@@ -82,3 +85,139 @@ known-first-party = ["plex_mcp_server"]
 quote-style = "double"
 # Indent with spaces
 indent-style = "space"
+
+[tool.mypy]
+# Strict mode - enable all optional error checking flags
+strict = true
+
+# Python version
+python_version = "3.13"
+
+# Import discovery
+files = ["src/plex_mcp_server"]
+exclude = [
+    "^build/",
+    "^dist/",
+    "^\\.venv/",
+]
+
+# Disallow dynamic typing
+disallow_any_unimported = false  # Set to false initially to allow third-party libraries
+disallow_any_expr = false  # Set to false to allow some flexibility
+disallow_any_decorated = false  # Set to false for decorators
+disallow_any_explicit = false  # Set to false for explicit Any
+disallow_any_generics = true
+disallow_subclassing_any = true
+
+# Disallow untyped definitions and calls
+disallow_untyped_calls = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = false  # Set to false for decorators like @mcp.tool()
+
+# None and optional handling
+no_implicit_optional = true
+strict_optional = true
+
+# Configuring warnings
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_return_any = false  # Set to false to allow returning Any from third-party libraries
+warn_unreachable = true
+
+# Miscellaneous strictness flags
+strict_equality = true
+strict_concatenate = true
+
+# Configuring error messages
+show_error_codes = true
+show_column_numbers = true
+show_error_context = true
+pretty = true
+
+# Incremental mode
+incremental = true
+cache_dir = ".mypy_cache"
+
+# Per-module options for third-party libraries without stubs
+[[tool.mypy.overrides]]
+module = [
+    "plexapi.*",
+    "mcp.*",
+    "dotenv.*",
+]
+ignore_missing_imports = true
+
+[tool.pyright]
+# Python version
+pythonVersion = "3.13"
+
+# Include/exclude paths
+include = ["src/plex_mcp_server"]
+exclude = [
+    "**/__pycache__",
+    "**/node_modules",
+    ".venv",
+    "build",
+    "dist",
+]
+
+# Type checking mode
+typeCheckingMode = "standard"  # Options: "off", "basic", "standard", "strict"
+
+# Diagnostics
+reportMissingImports = true
+reportMissingTypeStubs = false
+reportUnusedImport = true
+reportUnusedClass = true
+reportUnusedFunction = true
+reportUnusedVariable = true
+reportDuplicateImport = true
+reportOptionalSubscript = true
+reportOptionalMemberAccess = true
+reportOptionalCall = true
+reportOptionalIterable = true
+reportOptionalContextManager = true
+reportOptionalOperand = true
+reportUntypedFunctionDecorator = false  # MCP decorators are untyped
+reportUntypedClassDecorator = false
+reportUntypedBaseClass = true
+reportUntypedNamedTuple = true
+reportPrivateUsage = false
+reportConstantRedefinition = true
+reportIncompatibleMethodOverride = true
+reportIncompatibleVariableOverride = true
+reportInconsistentConstructor = true
+reportOverlappingOverload = true
+reportMissingSuperCall = false
+reportUninitializedInstanceVariable = false
+reportInvalidStringEscapeSequence = true
+reportUnknownParameterType = false  # Too noisy with third-party libraries
+reportUnknownArgumentType = false
+reportUnknownLambdaType = false
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportMissingParameterType = false
+reportMissingTypeArgument = false
+reportInvalidTypeVarUse = true
+reportCallInDefaultInitializer = false
+reportUnnecessaryIsInstance = false
+reportUnnecessaryCast = true
+reportUnnecessaryComparison = true
+reportAssertAlwaysTrue = true
+reportSelfClsParameterName = true
+reportImplicitStringConcatenation = false
+reportUndefinedVariable = true
+reportUnboundVariable = true
+reportInvalidStubStatement = true
+reportIncompleteStub = true
+reportUnsupportedDunderAll = true
+reportUnusedCoroutine = true
+reportGeneralTypeIssues = true
+
+# Additional settings
+stubPath = "typings"
+venvPath = "."
+venv = ".venv"

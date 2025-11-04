@@ -1,13 +1,13 @@
 import json
 from typing import Any
 
-from plexapi.exceptions import NotFound  # type: ignore
+from plexapi.exceptions import NotFound
 
 from . import connect_to_plex, mcp
 
 
 @mcp.tool()
-async def collection_list(library_name: str = None) -> str:
+async def collection_list(library_name: str | None = None) -> str:
     """List all collections on the Plex server or in a specific library.
 
     Args:
@@ -98,8 +98,8 @@ async def collection_list(library_name: str = None) -> str:
 async def collection_create(
     collection_title: str,
     library_name: str,
-    item_titles: list[str] = None,
-    item_ids: list[int] = None,
+    item_titles: list[str] | None = None,
+    item_ids: list[int] | None = None,
 ) -> str:
     """Create a new collection with specified items.
 
@@ -142,7 +142,7 @@ async def collection_create(
 
         # Find items to add to the collection
         items = []
-        not_found = []
+        not_found: list[dict[str, Any] | str] = []
 
         # If we have item IDs, try to add by ID first
         if item_ids and len(item_ids) > 0:
@@ -228,11 +228,11 @@ async def collection_create(
 
 @mcp.tool()
 async def collection_add_to(
-    collection_title: str = None,
-    collection_id: int = None,
-    library_name: str = None,
-    item_titles: list[str] = None,
-    item_ids: list[int] = None,
+    collection_title: str | None = None,
+    collection_id: int | None = None,
+    library_name: str | None = None,
+    item_titles: list[str] | None = None,
+    item_ids: list[int] | None = None,
 ) -> str:
     """Add items to an existing collection.
 
@@ -306,7 +306,9 @@ async def collection_add_to(
 
             # Find matching collections
             matching_collections = [
-                c for c in library.collections() if c.title.lower() == collection_title.lower()
+                c
+                for c in library.collections()
+                if collection_title and c.title.lower() == collection_title.lower()
             ]
 
             if not matching_collections:
@@ -339,7 +341,7 @@ async def collection_add_to(
 
         # Find items to add
         items_to_add = []
-        not_found = []
+        not_found: list[dict[str, Any] | str] = []
         already_in_collection = []
         current_items = collection.items()
         current_item_ids = [item.ratingKey for item in current_items]
@@ -455,10 +457,10 @@ async def collection_add_to(
 
 @mcp.tool()
 async def collection_remove_from(
-    collection_title: str = None,
-    collection_id: int = None,
-    library_name: str = None,
-    item_titles: list[str] = None,
+    collection_title: str | None = None,
+    collection_id: int | None = None,
+    library_name: str | None = None,
+    item_titles: list[str] | None = None,
 ) -> str:
     """Remove items from a collection.
 
@@ -528,7 +530,9 @@ async def collection_remove_from(
 
             # Find matching collections
             matching_collections = [
-                c for c in library.collections() if c.title.lower() == collection_title.lower()
+                c
+                for c in library.collections()
+                if collection_title and c.title.lower() == collection_title.lower()
             ]
 
             if not matching_collections:
@@ -611,7 +615,9 @@ async def collection_remove_from(
 
 @mcp.tool()
 async def collection_delete(
-    collection_title: str = None, collection_id: int = None, library_name: str = None
+    collection_title: str | None = None,
+    collection_id: int | None = None,
+    library_name: str | None = None,
 ) -> str:
     """Delete a collection.
 
@@ -680,7 +686,9 @@ async def collection_delete(
 
         # Find matching collections
         matching_collections = [
-            c for c in library.collections() if c.title.lower() == collection_title.lower()
+            c
+            for c in library.collections()
+            if collection_title and c.title.lower() == collection_title.lower()
         ]
 
         if not matching_collections:
@@ -719,21 +727,21 @@ async def collection_delete(
 
 @mcp.tool()
 async def collection_edit(
-    collection_title: str = None,
-    collection_id: int = None,
-    library_name: str = None,
-    new_title: str = None,
-    new_sort_title: str = None,
-    new_summary: str = None,
-    new_content_rating: str = None,
-    new_labels: list[str] = None,
-    add_labels: list[str] = None,
-    remove_labels: list[str] = None,
-    poster_path: str = None,
-    poster_url: str = None,
-    background_path: str = None,
-    background_url: str = None,
-    new_advanced_settings: dict[str, Any] = None,
+    collection_title: str | None = None,
+    collection_id: int | None = None,
+    library_name: str | None = None,
+    new_title: str | None = None,
+    new_sort_title: str | None = None,
+    new_summary: str | None = None,
+    new_content_rating: str | None = None,
+    new_labels: list[str] | None = None,
+    add_labels: list[str] | None = None,
+    remove_labels: list[str] | None = None,
+    poster_path: str | None = None,
+    poster_url: str | None = None,
+    background_path: str | None = None,
+    background_url: str | None = None,
+    new_advanced_settings: dict[str, Any] | None = None,
 ) -> str:
     """Comprehensively edit a collection's attributes.
 
@@ -808,7 +816,9 @@ async def collection_edit(
 
             # Find matching collections
             matching_collections = [
-                c for c in library.collections() if c.title.lower() == collection_title.lower()
+                c
+                for c in library.collections()
+                if collection_title and c.title.lower() == collection_title.lower()
             ]
 
             if not matching_collections:

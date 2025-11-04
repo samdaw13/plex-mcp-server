@@ -1,3 +1,5 @@
+# ruff: noqa: E402 - Top level imports
+# pyright: reportUnusedImport=none
 import os
 import time
 
@@ -24,8 +26,8 @@ mcp = FastMCP("plex-server")
 # Global variables for Plex connection
 plex_url = os.environ.get("PLEX_URL", "")
 plex_token = os.environ.get("PLEX_TOKEN", "")
-server = None
-last_connection_time = 0
+server: PlexServer | None = None
+last_connection_time: float = 0.0
 CONNECTION_TIMEOUT = 30  # seconds
 SESSION_TIMEOUT = 60 * 30  # 30 minutes
 
@@ -92,7 +94,12 @@ def connect_to_plex() -> PlexServer:
 
                 # If we get here, none of the connection attempts worked
                 # Fall back to resource.connect() as a last resort
-                server = account.resource(server_name).connect(timeout=CONNECTION_TIMEOUT)
+                connected_server: PlexServer | None = account.resource(server_name).connect(
+                    timeout=CONNECTION_TIMEOUT
+                )
+                if connected_server is None:
+                    raise ValueError(f"Failed to connect to server '{server_name}'")
+                server = connected_server
                 last_connection_time = current_time
                 return server
 
@@ -109,3 +116,17 @@ def connect_to_plex() -> PlexServer:
 
     # We shouldn't get here but just in case
     raise ValueError("Failed to connect to Plex server")
+
+
+# Import all tool modules to register their @mcp.tool() decorators
+# These imports are intentionally unused - they register tools via side effects
+from . import (
+    client,  # noqa: F401
+    collection,  # noqa: F401
+    library,  # noqa: F401
+    media,  # noqa: F401
+    playlist,  # noqa: F401
+    sessions,  # noqa: F401
+    user,  # noqa: F401
+)
+from . import server as server_module  # noqa: F401

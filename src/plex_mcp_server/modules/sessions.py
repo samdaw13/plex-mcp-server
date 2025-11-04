@@ -1,12 +1,13 @@
 import contextlib
 import json
+from typing import Any
 
 from . import connect_to_plex, mcp
 
 
 # Functions for sessions and playback
 @mcp.tool()
-async def sessions_get_active(unused: str = None) -> str:
+async def sessions_get_active(unused: str | None = None) -> str:
     """Get information about current playback sessions, including IP addresses.
 
     Args:
@@ -43,10 +44,12 @@ async def sessions_get_active(unused: str = None) -> str:
             player = getattr(session, "player", None)
             user = getattr(session, "usernames", ["Unknown User"])[0]
 
-            session_info = {
+            session_info: dict[str, Any] = {
                 "session_id": i,
-                "state": player.state,
-                "player_name": player.title,
+                "state": getattr(player, "state", "unknown") if player else "unknown",
+                "player_name": getattr(player, "title", "Unknown Player")
+                if player
+                else "Unknown Player",
                 "user": user,
                 "content_type": item_type,
                 "player": {},
@@ -97,9 +100,11 @@ async def sessions_get_active(unused: str = None) -> str:
                 session_info["player"] = player_info
 
             # Add playback information
-            if hasattr(session, "viewOffset") and hasattr(session, "duration"):
-                progress = (session.viewOffset / session.duration) * 100
-                seconds_remaining = (session.duration - session.viewOffset) / 1000
+            view_offset = getattr(session, "viewOffset", None)
+            duration = getattr(session, "duration", None)
+            if view_offset is not None and duration is not None and duration > 0:
+                progress = (view_offset / duration) * 100
+                seconds_remaining = (duration - view_offset) / 1000
                 minutes_remaining = seconds_remaining / 60
 
                 session_info["progress"] = {
@@ -108,13 +113,14 @@ async def sessions_get_active(unused: str = None) -> str:
                 }
 
             # Add quality information if available
-            if hasattr(session, "media") and session.media:
+            session_media = getattr(session, "media", None)
+            if session_media:
                 media = (
-                    session.media[0]
-                    if isinstance(session.media, list) and session.media
-                    else session.media
+                    session_media[0]
+                    if isinstance(session_media, list) and session_media
+                    else session_media
                 )
-                media_info = {}
+                media_info: dict[str, Any] = {}
 
                 bitrate = getattr(media, "bitrate", None)
                 if bitrate:
@@ -139,7 +145,7 @@ async def sessions_get_active(unused: str = None) -> str:
                     else transcode_session
                 )
 
-                transcode_info = {"active": True}
+                transcode_info: dict[str, Any] = {"active": True}
 
                 # Add source vs target information if available
                 if hasattr(transcode, "sourceVideoCodec") and hasattr(transcode, "videoCodec"):
@@ -189,7 +195,9 @@ async def sessions_get_active(unused: str = None) -> str:
 
 @mcp.tool()
 async def sessions_get_media_playback_history(
-    media_title: str = None, library_name: str = None, media_id: int = None
+    media_title: str | None = None,
+    library_name: str | None = None,
+    media_id: int | None = None,
 ) -> str:
     """Get playback history for a specific media item.
 
@@ -207,8 +215,8 @@ async def sessions_get_media_playback_history(
                 {"status": "error", "message": "Either media_title or media_id must be provided."}
             )
 
-        media = None
-        results = []
+        media: Any | None = None
+        results: list[Any] = []
 
         # If media_id is provided, try to fetch the item directly
         if media_id:
@@ -280,23 +288,32 @@ async def sessions_get_media_playback_history(
 
             media = results[0]
 
+        # Check if media was found
+        if media is None:
+            return json.dumps({"status": "error", "message": "Media not found."})
+
         media_type = getattr(media, "type", "unknown")
 
         # Format title differently based on media type
-        media_info = {"media_id": media.ratingKey, "key": media.key}
+        media_info: dict[str, Any] = {
+            "media_id": getattr(media, "ratingKey", "unknown"),
+            "key": getattr(media, "key", "unknown"),
+        }
 
         if media_type == "episode":
             show = getattr(media, "grandparentTitle", "Unknown Show")
             season = getattr(media, "parentTitle", "Unknown Season")
-            formatted_title = f"{show} - {season} - {media.title}"
+            episode_title = getattr(media, "title", "Unknown Episode")
+            formatted_title = f"{show} - {season} - {episode_title}"
             media_info["show_title"] = show
             media_info["season_title"] = season
-            media_info["episode_title"] = media.title
+            media_info["episode_title"] = episode_title
         else:
             year = getattr(media, "year", "")
             year_str = f" ({year})" if year else ""
-            formatted_title = f"{media.title}{year_str}"
-            media_info["title"] = media.title
+            media_title_str = getattr(media, "title", "Unknown")
+            formatted_title = f"{media_title_str}{year_str}"
+            media_info["title"] = media_title_str
             if year:
                 media_info["year"] = year
 
@@ -305,7 +322,10 @@ async def sessions_get_media_playback_history(
 
         # Get the history using the history() method
         try:
-            history_items = media.history()
+            history_method = getattr(media, "history", None)
+            if history_method is None:
+                raise AttributeError("history method not available")
+            history_items = history_method()
 
             if not history_items:
                 return json.dumps(

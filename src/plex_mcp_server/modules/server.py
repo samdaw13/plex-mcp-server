@@ -2,10 +2,18 @@ import asyncio
 import contextlib
 import json
 import os
+import traceback
+from typing import TYPE_CHECKING, Any
+from zipfile import ZipFile
 
 import requests
 
 from . import connect_to_plex, mcp
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from plexapi.server import PlexServer, StatisticsBandwidth, StatisticsResources
 
 
 @mcp.tool()
@@ -19,7 +27,6 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -
     try:
         import io
         import os
-        import traceback
         import zipfile
 
         plex = connect_to_plex()
@@ -76,7 +83,7 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -
         return f"Error getting Plex logs: {str(e)}\n{traceback.format_exc()}"
 
 
-def extract_log_from_zip(zip_ref, log_file_name):
+def extract_log_from_zip(zip_ref: ZipFile, log_file_name: str) -> str:
     """Extract the requested log file content from a zip file object."""
     # List all files in the zip
     all_files = zip_ref.namelist()
@@ -88,11 +95,8 @@ def extract_log_from_zip(zip_ref, log_file_name):
             log_file_path = file
             break
 
-            if not log_file_path:
-                raise ValueError(
-                    f"Could not find log file for type: {log_file_name}. Available files: {', '.join(all_files)}"
-                )
-
+    if not log_file_path:
+        return "Log content not found"
     # Read the log file content
     with zip_ref.open(log_file_path) as f:
         log_content = f.read().decode("utf-8", errors="ignore")
@@ -140,7 +144,7 @@ async def server_get_info() -> str:
 
 
 @mcp.tool()
-async def server_get_bandwidth(timespan: str = None, lan: str = None) -> str:
+async def server_get_bandwidth(timespan: str | None = None, lan: str | None = None) -> str:
     """Get bandwidth statistics from the Plex server.
 
     Args:
@@ -151,14 +155,14 @@ async def server_get_bandwidth(timespan: str = None, lan: str = None) -> str:
         Dictionary containing bandwidth statistics
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
 
         # Get bandwidth information
         bandwidth_stats = []
 
         if hasattr(plex, "bandwidth"):
             # Prepare kwargs for bandwidth() call
-            kwargs = {}
+            kwargs: dict[str, Any] = {}
 
             # Add timespan if provided
             if timespan:
@@ -174,7 +178,9 @@ async def server_get_bandwidth(timespan: str = None, lan: str = None) -> str:
                     kwargs["lan"] = False
 
             # Call bandwidth with the constructed kwargs
-            bandwidth_data = plex.bandwidth(**kwargs)
+            bandwidth_data: list[StatisticsBandwidth] = [
+                bandwidth for bandwidth in plex.bandwidth(**kwargs) if bandwidth is not None
+            ]
 
             for bandwidth in bandwidth_data:
                 # Each bandwidth object has properties like accountID, at, bytes, deviceID, lan, timespan
@@ -215,16 +221,18 @@ async def server_get_current_resources() -> str:
         Dictionary containing resource usage statistics
     """
     try:
-        plex = connect_to_plex()
+        plex: PlexServer = connect_to_plex()
 
         # Get resource information
         resources_data = []
 
         if hasattr(plex, "resources"):
-            server_resources = plex.resources()
+            server_resources: Sequence[StatisticsResources] = [
+                resource for resource in plex.resources() if resource is not None
+            ]
 
             for resource in server_resources:
-                # Create an entry for each resource timepoint
+                # Create an entry for each resource time point
                 resource_entry = {
                     "timestamp": str(resource.at) if hasattr(resource, "at") else None,
                     "host_cpu_utilization": resource.hostCpuUtilization
@@ -268,7 +276,7 @@ async def server_get_butler_tasks() -> str:
         headers = {"X-Plex-Token": token, "Accept": "application/xml"}
 
         # Disable SSL verification if using https
-        verify = not base_url.startswith("https")
+        verify = isinstance(base_url, str) and not base_url.startswith("https")
 
         response = requests.get(url, headers=headers, verify=verify)
 
@@ -283,7 +291,7 @@ async def server_get_butler_tasks() -> str:
                 # Extract butler tasks
                 butler_tasks = []
                 for task_elem in root.findall(".//ButlerTask"):
-                    task = {}
+                    task: dict[str, Any] = {}
                     for attr, value in task_elem.attrib.items():
                         # Convert boolean attributes
                         if value.lower() in ["true", "false"]:
@@ -342,7 +350,7 @@ async def server_get_alerts(timeout: int = 15) -> str:
         alerts_data = []
 
         # Define callback function to process alerts
-        def alert_callback(data):
+        def alert_callback(data: Any) -> None:
             # Print the raw data to help with debugging
             print(f"Raw alert data received: {data}")
 
@@ -420,7 +428,7 @@ async def server_run_butler_task(task_name: str) -> str:
         headers = {"X-Plex-Token": token}
 
         # Disable SSL verification if using https
-        verify = not base_url.startswith("https")
+        verify = isinstance(base_url, str) and not base_url.startswith("https")
 
         print(f"Running butler task: {task_name}")
         response = requests.post(url, headers=headers, verify=verify)
