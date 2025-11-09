@@ -5,7 +5,8 @@
       "Bash(mypy:*)",
       "Bash(pyright:*)",
       "Bash(uv run:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(docker exec:*)"
     ],
     "deny": [],
     "ask": []
