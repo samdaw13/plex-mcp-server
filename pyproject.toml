@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
     "aiohttp>=3.13.2",
+    "fastmcp>=2.13.0.2",
     "mcp>=1.20.0",
     "plexapi>=4.15.0",
     "python-dotenv>=1.0.0",

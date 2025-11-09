@@ -1,4 +1,10 @@
 {
+  "env": {
+    "ANTHROPIC_MODEL": "us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+    "ANTHROPIC_SMALL_FAST_MODEL": "us.anthropic.claude-3-5-haiku-20241022-v1:0",
+    "CLAUDE_CODE_USE_BEDROCK": "1",
+    "AWS_REGION": "us-west-2"
+  },
   "permissions": {
     "allow": [
       "Bash(ruff check:*)",
@@ -6,7 +12,15 @@
       "Bash(pyright:*)",
       "Bash(uv run:*)",
       "Bash(curl:*)",
-      "Bash(docker exec:*)"
+      "Bash(docker exec:*)",
+      "Bash(sed:*)",
+      "Bash(done)",
+      "Bash(docker compose logs:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose up:*)",
+      "Bash(docker compose exec:*)",
+      "Bash(docker compose:*)",
+      "mcp__ide__getDiagnostics"
     ],
     "deny": [],
     "ask": []

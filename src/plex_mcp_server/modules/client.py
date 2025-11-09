@@ -3,12 +3,23 @@ Client-related functions for Plex Media Server.
 Provides tools to connect to clients and control media playback.
 """
 
-import json
 import time
 from typing import TYPE_CHECKING
 
+from mcp.types import ToolAnnotations
 from plexapi.exceptions import NotFound
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    ActiveClientsResponse,
+    ClientDetailsResponse,
+    ClientInfo,
+    ClientListResponse,
+    ClientTimelineResponse,
+    ErrorResponse,
+    PlaybackResponse,
+    SuccessResponse,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
@@ -18,15 +29,20 @@ if TYPE_CHECKING:
     from plexapi.server import PlexServer
 
 
-@mcp.tool()
-async def client_list(include_details: bool = True) -> str:
+@mcp.tool(
+    name="client_list",
+    description="List all available Plex clients connected to the server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True)
+)
+async def client_list(include_details: bool = True) -> ClientListResponse | ErrorResponse:
     """List all available Plex clients connected to the server.
 
     Args:
         include_details: Whether to include detailed information about each client
 
     Returns:
-        List of client names or detailed info dictionaries
+        ClientListResponse with list of clients
     """
     try:
         plex: PlexServer = connect_to_plex()
@@ -51,52 +67,51 @@ async def client_list(include_details: bool = True) -> str:
                 client_ids.add(client.machineIdentifier)
 
         if not all_clients:
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": "No clients currently connected to your Plex server.",
-                    "count": 0,
-                    "clients": [],
-                }
+            return ClientListResponse(
+                status="success",
+                message="No clients currently connected to your Plex server.",
+                count=0,
+                clients=[]
             )
 
-        result = []
         if include_details:
-            for client in all_clients:
-                result.append(
-                    {
-                        "name": client.title,
-                        "device": getattr(client, "device", "Unknown"),
-                        "model": getattr(client, "model", "Unknown"),
-                        "product": getattr(client, "product", "Unknown"),
-                        "version": getattr(client, "version", "Unknown"),
-                        "platform": getattr(client, "platform", "Unknown"),
-                        "state": getattr(client, "state", "Unknown"),
-                        "machineIdentifier": getattr(client, "machineIdentifier", "Unknown"),
-                        "address": getattr(client, "_baseurl", "Unknown")
-                        or getattr(client, "address", "Unknown"),
-                        "protocolCapabilities": getattr(client, "protocolCapabilities", []),
-                    }
+            result = [
+                ClientInfo(
+                    name=client.title,
+                    device=getattr(client, "device", "Unknown"),
+                    model=getattr(client, "model", "Unknown"),
+                    product=getattr(client, "product", "Unknown"),
+                    version=getattr(client, "version", "Unknown"),
+                    platform=getattr(client, "platform", "Unknown"),
+                    state=getattr(client, "state", "Unknown"),
+                    machineIdentifier=getattr(client, "machineIdentifier", "Unknown"),
+                    address=getattr(client, "_baseurl", "Unknown")
+                    or getattr(client, "address", "Unknown"),
+                    protocolCapabilities=getattr(client, "protocolCapabilities", [])
                 )
+                for client in all_clients
+            ]
         else:
             result = [client.title for client in all_clients]
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Found {len(all_clients)} connected clients",
-                "count": len(all_clients),
-                "clients": result,
-            },
-            indent=2,
+        return ClientListResponse(
+            status="success",
+            message=f"Found {len(all_clients)} connected clients",
+            count=len(all_clients),
+            clients=result
         )
 
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"Error listing clients: {str(e)}"})
+        return ErrorResponse(message=f"Error listing clients: {str(e)}")
 
 
-@mcp.tool()
-async def client_get_details(client_name: str) -> str:
+@mcp.tool(
+    name="client_get_details",
+    description="Get detailed information about a specific Plex client",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True)
+)
+async def client_get_details(client_name: str) -> ClientDetailsResponse | ErrorResponse:
     """Get detailed information about a specific Plex client.
 
     Args:
@@ -143,9 +158,7 @@ async def client_get_details(client_name: str) -> str:
                 if matching_session_clients:
                     client = matching_session_clients[0]
                 else:
-                    return json.dumps(
-                        {"status": "error", "message": f"No client found matching '{client_name}'"}
-                    )
+                    return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         client_details = {
             "name": client.title,
@@ -167,14 +180,19 @@ async def client_get_details(client_name: str) -> str:
             "vendor": getattr(client, "vendor", "Unknown"),
         }
 
-        return json.dumps({"status": "success", "client": client_details}, indent=2)
+        return ClientDetailsResponse(status="success", client=client_details)
 
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"Error getting client details: {str(e)}"})
+        return ErrorResponse(message=f"Error getting client details: {str(e)}")
 
 
-@mcp.tool()
-async def client_get_timelines(client_name: str) -> str:
+@mcp.tool(
+    name="client_get_timelines",
+    description="Get the current timeline information for a specific Plex client",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True)
+)
+async def client_get_timelines(client_name: str) -> ClientTimelineResponse | ErrorResponse:
     """Get the current timeline information for a specific Plex client.
 
     Args:
@@ -221,9 +239,7 @@ async def client_get_timelines(client_name: str) -> str:
                 if matching_session_clients:
                     client = matching_session_clients[0]
                 else:
-                    return json.dumps(
-                        {"status": "error", "message": f"No client found matching '{client_name}'"}
-                    )
+                    return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         # Some clients may not always respond to timeline requests
         try:
@@ -255,23 +271,15 @@ async def client_get_timelines(client_name: str) -> str:
                             "type": getattr(session, "type", "Unknown"),
                         }
 
-                        return json.dumps(
-                            {
-                                "status": "success",
-                                "client_name": client.title,
-                                "source": "session",
-                                "timeline": session_data,
-                            },
-                            indent=2,
+                        return ClientTimelineResponse(
+                                status="success",
+                                client_name=client.title,
+                                source="session",
+                                timeline=session_data
                         )
 
-                return json.dumps(
-                    {
-                        "status": "info",
-                        "message": f"Client '{client.title}' is not currently playing any media.",
-                        "client_name": client.title,
-                    }
-                )
+                return ClientTimelineResponse(status="info", message=f"Client '{client.title}' is not currently playing any media.", client_name=client.title,
+                    )
 
             # Process timeline data
             timeline_data = {
@@ -294,14 +302,11 @@ async def client_get_timelines(client_name: str) -> str:
                 "guid": getattr(timeline, "guid", None),
             }
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "client_name": client.title,
-                    "source": "timeline",
-                    "timeline": timeline_data,
-                },
-                indent=2,
+            return ClientTimelineResponse(
+                    status="success",
+                    client_name=client.title,
+                    source="timeline",
+                    timeline=timeline_data
             )
         except Exception:
             # Check if there's an active session for this client
@@ -328,32 +333,27 @@ async def client_get_timelines(client_name: str) -> str:
                         "type": getattr(session, "type", "Unknown"),
                     }
 
-                    return json.dumps(
-                        {
-                            "status": "success",
-                            "client_name": client.title,
-                            "source": "session",
-                            "timeline": session_data,
-                        },
-                        indent=2,
+                    return ClientTimelineResponse(
+                            status="success",
+                            client_name=client.title,
+                            source="session",
+                            timeline=session_data
                     )
 
-            return json.dumps(
-                {
-                    "status": "warning",
-                    "message": f"Unable to get timeline information for client '{client.title}'. The client may not be responding to timeline requests.",
-                    "client_name": client.title,
-                }
-            )
+            return ClientTimelineResponse(status="warning", message=f"Unable to get timeline information for client '{client.title}'. The client may not be responding to timeline requests.", client_name=client.title,
+                )
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error getting client timeline: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error getting client timeline: {str(e)}")
 
 
-@mcp.tool()
-async def client_get_active() -> str:
+@mcp.tool(
+    name="client_get_active",
+    description="Get all clients that are currently playing media",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True)
+)
+async def client_get_active() -> ActiveClientsResponse | ErrorResponse:
     """Get all clients that are currently playing media.
 
     Returns:
@@ -368,13 +368,11 @@ async def client_get_active() -> str:
         ]
 
         if not sessions:
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": "No active playback sessions found.",
-                    "count": 0,
-                    "active_clients": [],
-                }
+            return ActiveClientsResponse(
+                    status="success",
+                    message="No active playback sessions found.",
+                    count=0,
+                    active_clients=[],
             )
 
         active_clients = []
@@ -430,28 +428,30 @@ async def client_get_active() -> str:
 
                 active_clients.append(client_info)
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Found {len(active_clients)} active clients",
-                "count": len(active_clients),
-                "active_clients": active_clients,
-            },
-            indent=2,
+        return ActiveClientsResponse(
+                status="success",
+                message=f"Found {len(active_clients)} active clients",
+                count=len(active_clients),
+                active_clients=active_clients
         )
 
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"Error getting active clients: {str(e)}"})
+        return ErrorResponse(message=f"Error getting active clients: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="client_start_playback",
+    description="Start playback of media on a specified client",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
+)
 async def client_start_playback(
     media_title: str,
     client_name: str | None = None,
     offset: int = 0,
     library_name: str | None = None,
     use_external_player: bool = False,
-) -> str:
+) -> PlaybackResponse | ErrorResponse:
     """Start playback of media on a specified client.
 
     Args:
@@ -471,16 +471,12 @@ async def client_start_playback(
                 library = plex.library.section(library_name)
                 results = library.search(title=media_title)
             except Exception:
-                return json.dumps(
-                    {"status": "error", "message": f"Library '{library_name}' not found"}
-                )
+                return ErrorResponse(message=f"Library '{library_name}' not found")
         else:
             results = plex.search(media_title)
 
         if not results:
-            return json.dumps(
-                {"status": "error", "message": f"No media found matching '{media_title}'"}
-            )
+            return ErrorResponse(message=f"No media found matching '{media_title}'")
 
         if len(results) > 1:
             # If multiple results, provide information about them
@@ -509,14 +505,10 @@ async def client_start_playback(
 
                 media_list.append(media_info)
 
-            return json.dumps(
-                {
-                    "status": "multiple_results",
-                    "message": f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title.",
-                    "count": len(results),
-                    "results": media_list,
-                },
-                indent=2,
+            return PlaybackResponse(status="multiple_results",
+                    message=f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title.",
+                    count=len(results),
+                    results=media_list,
             )
 
         media = results[0]
@@ -526,11 +518,9 @@ async def client_start_playback(
             clients = plex.clients()
 
             if not clients:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": "No clients are currently connected to your Plex server.",
-                    }
+                return PlaybackResponse(
+                        status="error",
+                        message="No clients are currently connected to your Plex server.",
                 )
 
             client_list = []
@@ -543,13 +533,9 @@ async def client_start_playback(
                     }
                 )
 
-            return json.dumps(
-                {
-                    "status": "client_selection",
-                    "message": "Please specify a client to play on using the client_name parameter",
-                    "available_clients": client_list,
-                },
-                indent=2,
+            return PlaybackResponse(status="client_selection",
+                    message="Please specify a client to play on using the client_name parameter",
+                    available_clients=client_list,
             )
 
         # Try to find the client
@@ -561,9 +547,7 @@ async def client_start_playback(
             if matching_clients:
                 client = matching_clients[0]
             else:
-                return json.dumps(
-                    {"status": "error", "message": f"No client found matching '{client_name}'"}
-                )
+                return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         # Start playback
         media_type = getattr(media, "type", "unknown")
@@ -584,42 +568,40 @@ async def client_start_playback(
                 if "Player" in client.protocolCapabilities:
                     media.playOn(client)
                 else:
-                    return json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Client '{client.title}' does not support external player",
-                        }
+                    return PlaybackResponse(
+                            status="error",
+                            message=f"Client '{client.title}' does not support external player",
                     )
             else:
                 # Normal playback
                 client.playMedia(media, offset=offset)
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"Started playback of '{formatted_title}' on {client.title}",
-                    "media": {
+            return PlaybackResponse(status="success", message=f"Started playback of \'{formatted_title}\' on {client.title}",
+                    media={
                         "title": title,
                         "type": media_type,
                         "formatted_title": formatted_title,
                         "rating_key": getattr(media, "ratingKey", None),
                     },
-                    "client": client.title,
-                    "offset": offset,
-                },
-                indent=2,
+                    client=client.title,
+                    offset=offset,
             )
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error starting playback: {str(e)}"})
+            return ErrorResponse(message=f"Error starting playback: {str(e)}")
 
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"Error setting up playback: {str(e)}"})
+        return ErrorResponse(message=f"Error setting up playback: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="client_control_playback",
+    description="Control playback on a specified client (play, pause, stop, seek, volume, etc.)",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
+)
 async def client_control_playback(
     client_name: str, action: str, parameter: int | None = None, media_type: str = "video"
-) -> str:
+) -> SuccessResponse | ErrorResponse:
     """Control playback on a specified client.
 
     Args:
@@ -650,28 +632,20 @@ async def client_control_playback(
         ]
 
         if action not in valid_actions:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Invalid action '{action}'. Valid actions are: {', '.join(valid_actions)}",
-                }
+            return ErrorResponse(
+                    message=f"Invalid action '{action}'. Valid actions are: {', '.join(valid_actions)}"
             )
 
         # Check if parameter is needed but not provided
         actions_needing_parameter = ["seekTo", "setVolume"]
         if action in actions_needing_parameter and parameter is None:
-            return json.dumps(
-                {"status": "error", "message": f"Action '{action}' requires a parameter value."}
-            )
+            return ErrorResponse(message=f"Action '{action}' requires a parameter value.")
 
         # Validate media type
         valid_media_types = ["video", "music", "photo"]
         if media_type not in valid_media_types:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Invalid media type '{media_type}'. Valid types are: {', '.join(valid_media_types)}",
-                }
+            return ErrorResponse(
+                    message=f"Invalid media type '{media_type}'. Valid types are: {', '.join(valid_media_types)}"
             )
 
         # Try to find the client
@@ -683,17 +657,12 @@ async def client_control_playback(
             if matching_clients:
                 client = matching_clients[0]
             else:
-                return json.dumps(
-                    {"status": "error", "message": f"No client found matching '{client_name}'"}
-                )
+                return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         # Check if the client has playback control capability
         if "playback" not in client.protocolCapabilities:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Client '{client.title}' does not support playback control.",
-                }
+            return ErrorResponse(
+                    message=f"Client '{client.title}' does not support playback control."
             )
 
         # Perform the requested action
@@ -736,13 +705,9 @@ async def client_control_playback(
             elif action == "setVolume":
                 # Parameter should be 0-100
                 if parameter is None:
-                    return json.dumps(
-                        {"status": "error", "message": "Volume parameter is required"}
-                    )
+                    return ErrorResponse(message="Volume parameter is required")
                 if parameter < 0 or parameter > 100:
-                    return json.dumps(
-                        {"status": "error", "message": "Volume must be between 0 and 100"}
-                    )
+                    return ErrorResponse(message="Volume must be between 0 and 100")
                 client.setVolume(parameter)
 
             # Check timeline to confirm the action (may take a moment to update)
@@ -765,31 +730,27 @@ async def client_control_playback(
             except Exception:
                 timeline_data = None
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"Successfully performed action '{action}' on client '{client.title}'",
-                    "action": action,
-                    "client": client.title,
-                    "parameter": parameter,
-                    "timeline": timeline_data,
-                },
-                indent=2,
+            return SuccessResponse(status="success", message=f"Successfully performed action '{action}' on client '{client.title}'",
+                    action=action,
+                    client=client.title,
+                    parameter=parameter,
+                    timeline=timeline_data,
             )
 
         except Exception as e:
-            return json.dumps(
-                {"status": "error", "message": f"Error controlling playback: {str(e)}"}
-            )
+            return ErrorResponse(message=f"Error controlling playback: {str(e)}")
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error setting up playback control: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error setting up playback control: {str(e)}")
 
 
-@mcp.tool()
-async def client_navigate(client_name: str, action: str) -> str:
+@mcp.tool(
+    name="client_navigate",
+    description="Navigate a Plex client interface (arrows, select, back, home, etc.)",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
+)
+async def client_navigate(client_name: str, action: str) -> SuccessResponse | ErrorResponse:
     """Navigate a Plex client interface.
 
     Args:
@@ -813,11 +774,8 @@ async def client_navigate(client_name: str, action: str) -> str:
         ]
 
         if action not in valid_actions:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Invalid navigation action '{action}'. Valid actions are: {', '.join(valid_actions)}",
-                }
+            return ErrorResponse(
+                    message=f"Invalid navigation action '{action}'. Valid actions are: {', '.join(valid_actions)}"
             )
 
         # Try to find the client
@@ -829,17 +787,12 @@ async def client_navigate(client_name: str, action: str) -> str:
             if matching_clients:
                 client = matching_clients[0]
             else:
-                return json.dumps(
-                    {"status": "error", "message": f"No client found matching '{client_name}'"}
-                )
+                return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         # Check if the client has navigation capability
         if "navigation" not in client.protocolCapabilities:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Client '{client.title}' does not support navigation control.",
-                }
+            return ErrorResponse(
+                    message=f"Client '{client.title}' does not support navigation control."
             )
 
         # Perform the requested action
@@ -861,32 +814,30 @@ async def client_navigate(client_name: str, action: str) -> str:
             elif action == "contextMenu":
                 client.contextMenu()
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"Successfully performed navigation action '{action}' on client '{client.title}'",
-                    "action": action,
-                    "client": client.title,
-                },
-                indent=2,
+            return SuccessResponse(status="success", message=f"Successfully performed navigation action '{action}' on client '{client.title}'",
+                    action=action,
+                    client=client.title,
             )
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error navigating client: {str(e)}"})
+            return ErrorResponse(message=f"Error navigating client: {str(e)}")
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error setting up client navigation: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error setting up client navigation: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="client_set_streams",
+    description="Set audio, subtitle, or video streams for current playback on a client",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
+)
 async def client_set_streams(
     client_name: str,
     audio_stream_id: str | None = None,
     subtitle_stream_id: str | None = None,
     video_stream_id: str | None = None,
-) -> str:
+) -> SuccessResponse | ErrorResponse:
     """Set audio, subtitle, or video streams for current playback on a client.
 
     Args:
@@ -900,11 +851,9 @@ async def client_set_streams(
 
         # Check if at least one stream ID is provided
         if audio_stream_id is None and subtitle_stream_id is None and video_stream_id is None:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "At least one stream ID (audio, subtitle, or video) must be provided.",
-                }
+            return SuccessResponse(
+                    status="error",
+                    message="At least one stream ID (audio, subtitle, or video) must be provided.",
             )
 
         # Try to find the client
@@ -916,9 +865,7 @@ async def client_set_streams(
             if matching_clients:
                 client = matching_clients[0]
             else:
-                return json.dumps(
-                    {"status": "error", "message": f"No client found matching '{client_name}'"}
-                )
+                return ErrorResponse(message=f"No client found matching '{client_name}'")
 
         # Check if client is currently playing
         timeline = None
@@ -943,18 +890,12 @@ async def client_set_streams(
                         break
 
                 if not client_session:
-                    return json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Client '{client.title}' is not currently playing any media.",
-                        }
+                    return ErrorResponse(
+                            message=f"Client '{client.title}' is not currently playing any media."
                     )
         except Exception:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Unable to get playback status for client '{client.title}'.",
-                }
+            return ErrorResponse(
+                    message=f"Unable to get playback status for client '{client.title}'."
             )
 
         # Set streams
@@ -972,25 +913,18 @@ async def client_set_streams(
                 client.setVideoStream(video_stream_id)
                 changed_streams.append(f"video to {video_stream_id}")
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"Successfully set streams for '{client.title}': {', '.join(changed_streams)}",
-                    "client": client.title,
-                    "changes": {
+            return SuccessResponse(status="success", message=f"Successfully set streams for '{client.title}': {', '.join(changed_streams)}",
+                    client=client.title,
+                    changes={
                         "audio_stream": audio_stream_id if audio_stream_id is not None else None,
                         "subtitle_stream": subtitle_stream_id
                         if subtitle_stream_id is not None
                         else None,
                         "video_stream": video_stream_id if video_stream_id is not None else None,
                     },
-                },
-                indent=2,
             )
         except Exception as e:
-            return json.dumps({"status": "error", "message": f"Error setting streams: {str(e)}"})
+            return ErrorResponse(message=f"Error setting streams: {str(e)}")
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error setting up stream selection: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error setting up stream selection: {str(e)}")
