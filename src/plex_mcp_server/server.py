@@ -7,7 +7,9 @@ from typing import Any
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
 from starlette.applications import Starlette
-from starlette.routing import Mount
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.routing import Mount, Route
 from starlette.types import Receive, Scope, Send
 
 from .modules import mcp
@@ -22,6 +24,28 @@ async def lifespan(app: Starlette) -> AsyncGenerator[None, Any]:
     for task in list[Task[None]](active_connections):
         task.cancel()
     active_connections.clear()
+
+
+async def list_tools_handler(request: Request) -> JSONResponse:
+    """Handler for listing all available MCP tools."""
+    tools_dict = await mcp.get_tools()
+    tools_list = [
+        {
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.parameters,
+            "output_schema": tool.output_schema,
+            "annotations": tool.annotations.model_dump()
+            if tool.annotations and hasattr(tool.annotations, "model_dump")
+            else tool.annotations,
+            "access": getattr(
+                tool, "access", next(iter(tool.tags), "read") if tool.tags else "read"
+            ),
+        }
+        for tool in tools_dict.values()
+    ]
+
+    return JSONResponse(tools_list)
 
 
 def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlette:
@@ -71,6 +95,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
     return Starlette(
         debug=debug,
         routes=[
+            Route("/tools", endpoint=list_tools_handler, methods=["GET"]),
             Mount("/", app=sse_handler),
         ],
         lifespan=lifespan,

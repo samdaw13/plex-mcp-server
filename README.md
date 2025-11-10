@@ -179,6 +179,7 @@ docker-compose up -d
 The server will be available at:
 - SSE endpoint: `http://localhost:3001/sse`
 - Message endpoint: `http://localhost:3001/messages/`
+- Tools endpoint: `http://localhost:3001/tools` - List all available MCP tools
 
 #### Configuration for MCP Clients (SSE Mode)
 
@@ -189,6 +190,191 @@ The server will be available at:
       "url": "http://localhost:3001/sse"
     }
   }
+}
+```
+
+#### Tools Endpoint
+
+When running in SSE mode, the server exposes a `/tools` endpoint that returns a JSON list of all available MCP tools. **Note:** This endpoint does not change how MCP clients connect to the server. MCP clients still connect via the `/sse` endpoint or stdio transport as configured. The `/tools` endpoint is a separate HTTP endpoint designed for tooling, type safety, and development purposes.
+
+This endpoint is particularly useful for:
+
+- **Type Safety**: Generate TypeScript interfaces or other type definitions from tool schemas
+- **Discovery**: Programmatically discover what tools are available
+- **Documentation**: Generate documentation from tool metadata
+- **Integration**: Build custom UIs or automation that need to know available operations
+- **Debugging**: Verify which tools are registered and their configurations
+
+**Endpoint:** `GET http://localhost:3001/tools`
+
+**Response Format:**
+
+Each tool in the response includes:
+- `name` - The tool's unique identifier
+- `description` - Human-readable description of what the tool does
+- `parameters` - JSON schema defining the tool's input parameters
+- `output_schema` - JSON schema defining the tool's output format
+- `annotations` - Tool metadata (readOnlyHint, destructiveHint, etc.)
+- `access` - Access level extracted from tool tags (read, write, delete)
+
+**Example Response:**
+
+```json
+[
+  {
+    "name": "library_list",
+    "description": "List all libraries on the server",
+    "parameters": {
+      "type": "object",
+      "properties": {},
+      "required": []
+    },
+    "output_schema": {
+      "type": "object",
+      "properties": {
+        "result": {
+          "anyOf": [
+            {"$ref": "#/$defs/LibraryListResponse"},
+            {"$ref": "#/$defs/ErrorResponse"}
+          ]
+        }
+      }
+    },
+    "annotations": {
+      "title": null,
+      "readOnlyHint": true,
+      "destructiveHint": null,
+      "idempotentHint": null,
+      "openWorldHint": null
+    },
+    "access": "read"
+  },
+  {
+    "name": "media_search",
+    "description": "Search for media across all libraries",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "content_type": {
+          "type": "string",
+          "default": null
+        }
+      },
+      "required": ["query"]
+    },
+    "output_schema": {...},
+    "annotations": {...},
+    "access": "read"
+  }
+]
+```
+
+**Usage Examples:**
+
+```bash
+# Get all tools
+curl http://localhost:3001/tools
+
+# Filter tools by access level (using jq)
+curl http://localhost:3001/tools | jq '.[] | select(.access == "write")'
+
+# Get tool names only
+curl http://localhost:3001/tools | jq '.[].name'
+
+# Find tools that can delete
+curl http://localhost:3001/tools | jq '.[] | select(.access == "delete")'
+```
+
+**Using in MCP Server Context:**
+
+The tools endpoint is particularly useful when building integrations that need to:
+
+1. **Type Safety & Code Generation**: Generate TypeScript interfaces, Python types, or other language bindings from tool schemas
+2. **Dynamic Tool Discovery**: Instead of hardcoding tool names, query the endpoint to discover available tools at runtime
+3. **Permission Management**: Use the `access` field to filter tools based on user permissions
+4. **UI Generation**: Build dynamic forms and interfaces based on tool parameter schemas
+5. **Documentation**: Automatically generate API documentation from tool metadata
+
+**TypeScript Type Generation Example:**
+
+You can use the `/tools` endpoint to generate TypeScript interfaces for type-safe tool calls:
+
+```typescript
+// Fetch tools and generate types
+async function generateToolTypes() {
+  const response = await fetch('http://localhost:3001/tools');
+  const tools = await response.json();
+  
+  // Generate TypeScript interfaces
+  const typeDefinitions = tools.map(tool => {
+    const paramsType = generateTypeFromSchema(tool.parameters);
+    const returnType = generateTypeFromSchema(tool.output_schema);
+    
+    return `
+      export interface ${tool.name}Params ${paramsType}
+      export type ${tool.name}Result = ${returnType};
+      
+      export async function ${tool.name}(params: ${tool.name}Params): Promise<${tool.name}Result> {
+        // Type-safe tool call implementation
+      }
+    `;
+  }).join('\n\n');
+  
+  return typeDefinitions;
+}
+
+// Example generated interface:
+// export interface media_searchParams {
+//   query: string;
+//   content_type?: string | null;
+// }
+// export type media_searchResult = MediaSearchResponse | ErrorResponse;
+```
+
+**Using with JSON Schema to TypeScript Tools:**
+
+You can use tools like `json-schema-to-typescript` to automatically generate types:
+
+```bash
+# Fetch tools and generate TypeScript definitions
+curl http://localhost:3001/tools | \
+  jq -r '.[] | "\(.name): \(.parameters | tostring)"' | \
+  json2ts --input - --output plex-tools.d.ts
+```
+
+**Dynamic UI Generation Example:**
+
+A web dashboard could fetch the tools list and dynamically generate a control panel:
+
+```javascript
+// Fetch available tools
+const response = await fetch('http://localhost:3001/tools');
+const tools = await response.json();
+
+// Filter read-only tools for a "View" panel
+const readOnlyTools = tools.filter(t => t.access === 'read');
+
+// Filter write tools for an "Edit" panel
+const writeTools = tools.filter(t => t.access === 'write');
+
+// Generate form fields from parameter schemas
+function generateFormFields(tool) {
+  const fields = [];
+  const props = tool.parameters.properties || {};
+  
+  for (const [name, schema] of Object.entries(props)) {
+    fields.push({
+      name,
+      type: schema.type,
+      required: tool.parameters.required?.includes(name),
+      description: schema.description
+    });
+  }
+  
+  return fields;
 }
 ```
 
