@@ -5,10 +5,10 @@ services:
       dockerfile: Dockerfile
     env_file:
       - .env
+    environment:
+      - FASTMCP_RELOAD=true
     ports:
       - "3001:3001"
-    # Volume mount disabled - use built image instead
-    # For development with live reload, uncomment:
-    # volumes:
-    #   - ./src:/app/src
+    volumes:
+      - ./src:/app/src
     restart: unless-stopped

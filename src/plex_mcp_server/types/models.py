@@ -243,19 +243,88 @@ class CollectionInfo(BaseModel):
     items: int
 
 
+class LibraryCollections(BaseModel):
+    """Collections within a library."""
+    type: str
+    collections_count: int
+    collections: list[CollectionInfo]
+
+
 class CollectionListResponse(BaseModel):
     """Response from collection_list tool."""
-    pass  # Can be dict of library collections or list of collections
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    collections: list[CollectionInfo] | dict[str, LibraryCollections] | None = None
 
 
-class CollectionOperationResponse(BaseModel):
-    """Generic collection operation response."""
-    status: str
-    message: str
-    collection: dict[str, str | int | bool] | None = None
+class PossibleMatch(BaseModel):
+    """Possible match for a media item."""
+    title: str
+    id: int
+    type: str
+    year: int | None = None
+
+
+class CollectionCreateResponse(BaseModel):
+    """Response from collection_create tool."""
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    created: bool | None = None
+    title: str | None = None
+    id: int | None = None
+    library: str | None = None
+    items_added: int | None = None
+    items_not_found: list[str] | None = None
+    possible_matches: list[PossibleMatch] | None = None
+
+
+class CollectionAddResponse(BaseModel):
+    """Response from collection_add_to tool."""
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    added: bool | None = None
+    title: str | None = None
     items_added: list[str] | None = None
+    items_already_in_collection: list[str] | None = None
+    items_not_found: list[str] | None = None
+    total_items: int | None = None
+    possible_matches: list[PossibleMatch] | None = None
+    multiple_collections: list[dict[str, str | int]] | None = None
+
+
+class CollectionRemoveResponse(BaseModel):
+    """Response from collection_remove_from tool."""
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    removed: bool | None = None
+    title: str | None = None
     items_removed: list[str] | None = None
-    not_found: list[str] | None = None
+    items_not_found: list[str] | None = None
+    remaining_items: int | None = None
+    collection_title: str | None = None
+    collection_id: int | None = None
+    current_items: list[dict[str, str | int]] | None = None
+    multiple_collections: list[dict[str, str | int]] | None = None
+
+
+class CollectionDeleteResponse(BaseModel):
+    """Response from collection_delete tool."""
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    deleted: bool | None = None
+    title: str | None = None
+    multiple_collections: list[dict[str, str | int]] | None = None
+
+
+class CollectionEditResponse(BaseModel):
+    """Response from collection_edit tool."""
+    model_config = {"extra": "allow"}
+    status: str = "success"
+    updated: bool | None = None
+    title: str | None = None
+    changes: list[str] | None = None
+    message: str | None = None
+    multiple_collections: list[dict[str, str | int]] | None = None
 
 
 # ============================================================================

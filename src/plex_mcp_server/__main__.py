@@ -4,29 +4,37 @@ import os
 
 import uvicorn
 
-# Import the main mcp instance from modules
-from .modules import mcp
-
-# Import all tools to ensure they are registered with MCP
-# This also has the side effect of registering the tools
-from .server import create_starlette_app
-
 
 def main() -> None:
     """Main entry point for the application."""
-    # Get configuration from environment variables
     host = os.environ.get("FASTMCP_HOST", "0.0.0.0")
     port = int(os.environ.get("FASTMCP_PORT", "3001"))
+    debug = os.environ.get("FASTMCP_DEBUG", "False") == "True"
+    reload = os.environ.get("FASTMCP_RELOAD", str(debug)).lower() in ("true", "1", "yes")
 
     print("Starting Plex MCP Server with SSE transport...")
     print(f"Server will listen on http://{host}:{port}")
     print("SSE endpoint: /sse")
     print(f"Plex URL: {os.environ.get('PLEX_URL', 'Not set')}")
+    print(f"Debug mode: {debug}")
+    print(f"Hot reload: {reload}")
 
-    # Run with SSE transport using proper Starlette app
-    mcp_server = mcp._mcp_server  # Access the underlying MCP server
-    starlette_app = create_starlette_app(mcp_server, debug=False)
-    uvicorn.run(starlette_app, host=host, port=port)
+    if reload:
+        uvicorn.run(
+            "plex_mcp_server.server:app",
+            host=host,
+            port=port,
+            reload=True,
+            reload_dirs=["src/plex_mcp_server"],
+            timeout_graceful_shutdown=2,
+        )
+    else:
+        uvicorn.run(
+            "plex_mcp_server.server:app",
+            host=host,
+            port=port,
+            timeout_graceful_shutdown=5,
+        )
 
 
 if __name__ == "__main__":

@@ -1,18 +1,31 @@
-import json
 from typing import Any
 
+from mcp.types import ToolAnnotations
 from plexapi.exceptions import NotFound
 
 from ..types.enums import ToolTag
+from ..types.models import (
+    CollectionAddResponse,
+    CollectionCreateResponse,
+    CollectionDeleteResponse,
+    CollectionEditResponse,
+    CollectionInfo,
+    CollectionListResponse,
+    CollectionRemoveResponse,
+    ErrorResponse,
+    LibraryCollections,
+    PossibleMatch,
+)
 from . import connect_to_plex, mcp
 
 
 @mcp.tool(
     name="collection_list",
     description="List all collections on the Plex server or in a specific library",
-    meta={"access": ToolTag.READ.value}
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True)
 )
-async def collection_list(library_name: str | None = None) -> str:
+async def collection_list(library_name: str | None = None) -> CollectionListResponse | ErrorResponse:
     """List all collections on the Plex server or in a specific library.
 
     Args:
@@ -20,28 +33,26 @@ async def collection_list(library_name: str | None = None) -> str:
     """
     try:
         plex = connect_to_plex()
-        collections_data = []
 
-        # If library_name is provided, only show collections from that library
         if library_name:
             try:
                 library = plex.library.section(library_name)
                 collections = library.collections()
-                for collection in collections:
-                    collection_info = {
-                        "title": collection.title,
-                        "summary": collection.summary,
-                        "is_smart": collection.smart,
-                        "ID": collection.ratingKey,
-                        "items": collection.childCount,
-                    }
-                    collections_data.append(collection_info)
+                collections_data = [
+                    CollectionInfo(
+                        title=collection.title,
+                        summary=collection.summary,
+                        is_smart=collection.smart,
+                        ID=collection.ratingKey,
+                        items=collection.childCount,
+                    )
+                    for collection in collections
+                ]
 
-                return json.dumps(collections_data, indent=4)
+                return CollectionListResponse(collections=collections_data)
             except NotFound:
-                return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
-        # No library specified, get collections from all movie and show libraries
         movie_libraries = []
         show_libraries = []
 
@@ -51,65 +62,61 @@ async def collection_list(library_name: str | None = None) -> str:
             elif section.type == "show":
                 show_libraries.append(section)
 
-        # Group collections by library
         libraries_collections = {}
 
-        # Get movie collections
         for library in movie_libraries:
-            lib_collections = []
+            lib_collections = [
+                CollectionInfo(
+                    title=collection.title,
+                    summary=collection.summary,
+                    is_smart=collection.smart,
+                    ID=collection.ratingKey,
+                    items=collection.childCount,
+                )
+                for collection in library.collections()
+            ]
 
-            for collection in library.collections():
-                collection_info = {
-                    "title": collection.title,
-                    "summary": collection.summary,
-                    "is_smart": collection.smart,
-                    "ID": collection.ratingKey,
-                    "items": collection.childCount,
-                }
-                lib_collections.append(collection_info)
+            libraries_collections[library.title] = LibraryCollections(
+                type="movie",
+                collections_count=len(lib_collections),
+                collections=lib_collections,
+            )
 
-            libraries_collections[library.title] = {
-                "type": "movie",
-                "collections_count": len(lib_collections),
-                "collections": lib_collections,
-            }
-
-        # Get TV show collections
         for library in show_libraries:
-            lib_collections = []
+            lib_collections = [
+                CollectionInfo(
+                    title=collection.title,
+                    summary=collection.summary,
+                    is_smart=collection.smart,
+                    ID=collection.ratingKey,
+                    items=collection.childCount,
+                )
+                for collection in library.collections()
+            ]
 
-            for collection in library.collections():
-                collection_info = {
-                    "title": collection.title,
-                    "summary": collection.summary,
-                    "is_smart": collection.smart,
-                    "ID": collection.ratingKey,
-                    "items": collection.childCount,
-                }
-                lib_collections.append(collection_info)
+            libraries_collections[library.title] = LibraryCollections(
+                type="show",
+                collections_count=len(lib_collections),
+                collections=lib_collections,
+            )
 
-            libraries_collections[library.title] = {
-                "type": "show",
-                "collections_count": len(lib_collections),
-                "collections": lib_collections,
-            }
-
-        return json.dumps(libraries_collections, indent=4)
+        return CollectionListResponse(collections=libraries_collections)
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
 @mcp.tool(
     name="collection_create",
     description="Create a new collection with specified items",
-    meta={"access": ToolTag.WRITE.value}
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
 )
 async def collection_create(
     collection_title: str,
     library_name: str,
     item_titles: list[str] | None = None,
     item_ids: list[int] | None = None,
-) -> str:
+) -> CollectionCreateResponse | ErrorResponse:
     """Create a new collection with specified items.
 
     Args:
@@ -121,43 +128,32 @@ async def collection_create(
     try:
         plex = connect_to_plex()
 
-        # Validate that at least one item source is provided
         if (not item_titles or len(item_titles) == 0) and (not item_ids or len(item_ids) == 0):
-            return json.dumps(
-                {"error": "Either item_titles or item_ids must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either item_titles or item_ids must be provided")
 
-        # Find the library
         try:
             library = plex.library.section(library_name)
         except NotFound:
-            return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            return ErrorResponse(message=f"Library '{library_name}' not found")
 
-        # Check if collection already exists
         try:
             existing_collection = next(
                 (c for c in library.collections() if c.title.lower() == collection_title.lower()),
                 None,
             )
             if existing_collection:
-                return json.dumps(
-                    {
-                        "error": f"Collection '{collection_title}' already exists in library '{library_name}'"
-                    },
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Collection '{collection_title}' already exists in library '{library_name}'"
                 )
         except Exception:
-            pass  # If we can't check existing collections, proceed anyway
+            pass
 
-        # Find items to add to the collection
         items = []
         not_found: list[dict[str, Any] | str] = []
 
-        # If we have item IDs, try to add by ID first
         if item_ids and len(item_ids) > 0:
             for item_id in item_ids:
                 try:
-                    # Try to fetch the item by ID
                     item = plex.fetchItem(item_id)
                     if item:
                         items.append(item)
@@ -166,14 +162,11 @@ async def collection_create(
                 except Exception:
                     not_found.append(str(item_id))
 
-        # If we have item titles, search for them
         if item_titles and len(item_titles) > 0:
             for title in item_titles:
-                # Search for the media item
                 search_results = library.search(title=title)
 
                 if search_results:
-                    # Check for exact title match (case insensitive)
                     exact_matches = [
                         item for item in search_results if item.title.lower() == title.lower()
                     ]
@@ -181,7 +174,6 @@ async def collection_create(
                     if exact_matches:
                         items.append(exact_matches[0])
                     else:
-                        # No exact match, collect possible matches
                         possible_matches = []
                         for item in search_results:
                             possible_matches.append(
@@ -199,46 +191,49 @@ async def collection_create(
                 else:
                     not_found.append(title)
 
-        # If we have possible matches but no items to add, return the possible matches
         if not items and any(isinstance(item, dict) for item in not_found):
-            possible_matches_response = []
+            possible_matches_list = []
             for item in not_found:
                 if isinstance(item, dict) and "possible_matches" in item:
                     for match in item["possible_matches"]:
-                        if match not in possible_matches_response:
-                            possible_matches_response.append(match)
+                        if match not in possible_matches_list:
+                            possible_matches_list.append(match)
 
-            return json.dumps(
-                {"Multiple Possible Matches Use ID": possible_matches_response}, indent=4
+            return CollectionCreateResponse(
+                status="error",
+                possible_matches=[
+                    PossibleMatch(
+                        title=m["title"],
+                        id=m["id"],
+                        type=m["type"],
+                        year=m.get("year")
+                    )
+                    for m in possible_matches_list
+                ]
             )
 
         if not items:
-            return json.dumps(
-                {"error": "No matching media items found for the collection"}, indent=4
-            )
+            return ErrorResponse(message="No matching media items found for the collection")
 
-        # Create the collection
         collection = library.createCollection(title=collection_title, items=items)
 
-        return json.dumps(
-            {
-                "created": True,
-                "title": collection.title,
-                "id": collection.ratingKey,
-                "library": library_name,
-                "items_added": len(items),
-                "items_not_found": [item for item in not_found if not isinstance(item, dict)],
-            },
-            indent=4,
+        return CollectionCreateResponse(
+            created=True,
+            title=collection.title,
+            id=collection.ratingKey,
+            library=library_name,
+            items_added=len(items),
+            items_not_found=[item for item in not_found if not isinstance(item, dict)],
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
 @mcp.tool(
     name="collection_add_to",
     description="Add items to an existing collection",
-    meta={"access": ToolTag.WRITE.value}
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
 )
 async def collection_add_to(
     collection_title: str | None = None,
@@ -246,7 +241,7 @@ async def collection_add_to(
     library_name: str | None = None,
     item_titles: list[str] | None = None,
     item_ids: list[int] | None = None,
-) -> str:
+) -> CollectionAddResponse | ErrorResponse:
     """Add items to an existing collection.
 
     Args:
@@ -259,30 +254,20 @@ async def collection_add_to(
     try:
         plex = connect_to_plex()
 
-        # Validate that at least one identifier is provided
         if not collection_id and not collection_title:
-            return json.dumps(
-                {"error": "Either collection_id or collection_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either collection_id or collection_title must be provided")
 
-        # Validate that at least one item source is provided
         if (not item_titles or len(item_titles) == 0) and (not item_ids or len(item_ids) == 0):
-            return json.dumps(
-                {"error": "Either item_titles or item_ids must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either item_titles or item_ids must be provided")
 
-        # Find the collection
         collection = None
         library = None
 
-        # If collection_id is provided, use it to directly fetch the collection
         if collection_id:
             try:
-                # Try fetching by ratingKey first
                 try:
                     collection = plex.fetchItem(collection_id)
                 except Exception:
-                    # If that fails, try finding by key in all libraries
                     collection = None
                     for section in plex.library.sections():
                         if section.type in ["movie", "show"]:
@@ -298,26 +283,18 @@ async def collection_add_to(
                                 continue
 
                 if not collection:
-                    return json.dumps(
-                        {"error": f"Collection with ID '{collection_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Collection with ID '{collection_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
-            # If we're searching by title
             if not library_name:
-                return json.dumps(
-                    {"error": "Library name is required when adding items by collection title"},
-                    indent=4,
-                )
+                return ErrorResponse(message="Library name is required when adding items by collection title")
 
-            # Find the library
             try:
                 library = plex.library.section(library_name)
             except NotFound:
-                return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
-            # Find matching collections
             matching_collections = [
                 c
                 for c in library.collections()
@@ -325,45 +302,39 @@ async def collection_add_to(
             ]
 
             if not matching_collections:
-                return json.dumps(
-                    {
-                        "error": f"Collection '{collection_title}' not found in library '{library_name}'"
-                    },
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Collection '{collection_title}' not found in library '{library_name}'"
                 )
 
-            # If multiple matching collections, return list of matches with IDs
             if len(matching_collections) > 1:
-                matches = []
-                for c in matching_collections:
-                    matches.append(
-                        {
-                            "title": c.title,
-                            "id": c.ratingKey,
-                            "library": library_name,
-                            "item_count": c.childCount
-                            if hasattr(c, "childCount")
-                            else len(c.items()),
-                        }
-                    )
+                matches = [
+                    {
+                        "title": c.title,
+                        "id": c.ratingKey,
+                        "library": library_name,
+                        "item_count": c.childCount
+                        if hasattr(c, "childCount")
+                        else len(c.items()),
+                    }
+                    for c in matching_collections
+                ]
 
-                # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return CollectionAddResponse(
+                    status="multiple_matches",
+                    multiple_collections=matches
+                )
 
             collection = matching_collections[0]
 
-        # Find items to add
         items_to_add = []
         not_found: list[dict[str, Any] | str] = []
         already_in_collection = []
         current_items = collection.items()
         current_item_ids = [item.ratingKey for item in current_items]
 
-        # If we have item IDs, try to add by ID first
         if item_ids and len(item_ids) > 0:
             for item_id in item_ids:
                 try:
-                    # Try to fetch the item by ID
                     item = plex.fetchItem(item_id)
                     if item:
                         if item.ratingKey in current_item_ids:
@@ -375,11 +346,8 @@ async def collection_add_to(
                 except Exception:
                     not_found.append(str(item_id))
 
-        # If we have item titles, search for them with exact matching
         if item_titles and len(item_titles) > 0:
             if not library:
-                # This could happen if we found the collection by ID
-                # Try to determine which library the collection belongs to
                 for section in plex.library.sections():
                     if section.type == "movie" or section.type == "show":
                         try:
@@ -393,16 +361,12 @@ async def collection_add_to(
                             continue
 
                 if not library:
-                    return json.dumps(
-                        {"error": "Could not determine which library to search in"}, indent=4
-                    )
+                    return ErrorResponse(message="Could not determine which library to search in")
 
             for title in item_titles:
-                # Search for the media item with exact matching
                 search_results = library.search(title=title)
 
                 if search_results:
-                    # Check for exact title match (case insensitive)
                     exact_matches = [
                         item for item in search_results if item.title.lower() == title.lower()
                     ]
@@ -414,7 +378,6 @@ async def collection_add_to(
                         else:
                             items_to_add.append(item)
                     else:
-                        # No exact match, collect possible matches
                         possible_matches = []
                         for item in search_results:
                             possible_matches.append(
@@ -432,53 +395,57 @@ async def collection_add_to(
                 else:
                     not_found.append(title)
 
-        # If we have possible matches but no items to add, return the possible matches
         if not items_to_add and any(isinstance(item, dict) for item in not_found):
-            possible_matches_response = []
+            possible_matches_list = []
             for item in not_found:
                 if isinstance(item, dict) and "possible_matches" in item:
                     for match in item["possible_matches"]:
-                        if match not in possible_matches_response:
-                            possible_matches_response.append(match)
+                        if match not in possible_matches_list:
+                            possible_matches_list.append(match)
 
-            return json.dumps(possible_matches_response, indent=4)
-
-        # If no items to add and no possible matches
-        if not items_to_add and not already_in_collection:
-            return json.dumps(
-                {"error": "No matching media items found to add to the collection"}, indent=4
+            return CollectionAddResponse(
+                status="error",
+                possible_matches=[
+                    PossibleMatch(
+                        title=m["title"],
+                        id=m["id"],
+                        type=m["type"],
+                        year=m.get("year")
+                    )
+                    for m in possible_matches_list
+                ]
             )
 
-        # Add items to the collection
+        if not items_to_add and not already_in_collection:
+            return ErrorResponse(message="No matching media items found to add to the collection")
+
         if items_to_add:
             collection.addItems(items_to_add)
 
-        return json.dumps(
-            {
-                "added": True,
-                "title": collection.title,
-                "items_added": [item.title for item in items_to_add],
-                "items_already_in_collection": already_in_collection,
-                "items_not_found": [item for item in not_found if not isinstance(item, dict)],
-                "total_items": len(collection.items()),
-            },
-            indent=4,
+        return CollectionAddResponse(
+            added=True,
+            title=collection.title,
+            items_added=[item.title for item in items_to_add],
+            items_already_in_collection=already_in_collection,
+            items_not_found=[item for item in not_found if not isinstance(item, dict)],
+            total_items=len(collection.items()),
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
 @mcp.tool(
     name="collection_remove_from",
     description="Remove items from an existing collection",
-    meta={"access": ToolTag.WRITE.value}
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False)
 )
 async def collection_remove_from(
     collection_title: str | None = None,
     collection_id: int | None = None,
     library_name: str | None = None,
     item_titles: list[str] | None = None,
-) -> str:
+) -> CollectionRemoveResponse | ErrorResponse:
     """Remove items from a collection.
 
     Args:
@@ -490,28 +457,19 @@ async def collection_remove_from(
     try:
         plex = connect_to_plex()
 
-        # Validate that at least one identifier is provided
         if not collection_id and not collection_title:
-            return json.dumps(
-                {"error": "Either collection_id or collection_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either collection_id or collection_title must be provided")
 
         if not item_titles or len(item_titles) == 0:
-            return json.dumps(
-                {"error": "At least one item title must be provided to remove"}, indent=4
-            )
+            return ErrorResponse(message="At least one item title must be provided to remove")
 
-        # Find the collection
         collection = None
 
-        # If collection_id is provided, use it to directly fetch the collection
         if collection_id:
             try:
-                # Try fetching by ratingKey first
                 try:
                     collection = plex.fetchItem(collection_id)
                 except Exception:
-                    # If that fails, try finding by key in all libraries
                     collection = None
                     for section in plex.library.sections():
                         if section.type in ["movie", "show"]:
@@ -526,26 +484,18 @@ async def collection_remove_from(
                                 continue
 
                 if not collection:
-                    return json.dumps(
-                        {"error": f"Collection with ID '{collection_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Collection with ID '{collection_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
-            # If we get here, we're searching by title
             if not library_name:
-                return json.dumps(
-                    {"error": "Library name is required when removing items by collection title"},
-                    indent=4,
-                )
+                return ErrorResponse(message="Library name is required when removing items by collection title")
 
-            # Find the library
             try:
                 library = plex.library.section(library_name)
             except NotFound:
-                return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
-            # Find matching collections
             matching_collections = [
                 c
                 for c in library.collections()
@@ -553,37 +503,31 @@ async def collection_remove_from(
             ]
 
             if not matching_collections:
-                return json.dumps(
-                    {
-                        "error": f"Collection '{collection_title}' not found in library '{library_name}'"
-                    },
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Collection '{collection_title}' not found in library '{library_name}'"
                 )
 
-            # If multiple matching collections, return list of matches with IDs
             if len(matching_collections) > 1:
-                matches = []
-                for c in matching_collections:
-                    matches.append(
-                        {
-                            "title": c.title,
-                            "id": c.ratingKey,
-                            "library": library_name,
-                            "item_count": c.childCount
-                            if hasattr(c, "childCount")
-                            else len(c.items()),
-                        }
-                    )
+                matches = [
+                    {
+                        "title": c.title,
+                        "id": c.ratingKey,
+                        "library": library_name,
+                        "item_count": c.childCount
+                        if hasattr(c, "childCount")
+                        else len(c.items()),
+                    }
+                    for c in matching_collections
+                ]
 
-                # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return CollectionRemoveResponse(
+                    status="multiple_matches",
+                    multiple_collections=matches
+                )
 
             collection = matching_collections[0]
 
-        # Get current items in the collection
         collection_items = collection.items()
-
-        # Find items to remove
         items_to_remove = []
         not_found = []
 
@@ -598,48 +542,42 @@ async def collection_remove_from(
                 not_found.append(title)
 
         if not items_to_remove:
-            # No items found to remove, return the current collection contents
-            current_items = []
-            for item in collection_items:
-                current_items.append({"title": item.title, "type": item.type, "id": item.ratingKey})
+            current_items = [
+                {"title": item.title, "type": item.type, "id": item.ratingKey}
+                for item in collection_items
+            ]
 
-            return json.dumps(
-                {
-                    "error": "No matching items found in the collection to remove",
-                    "collection_title": collection.title,
-                    "collection_id": collection.ratingKey,
-                    "current_items": current_items,
-                },
-                indent=4,
+            return CollectionRemoveResponse(
+                status="error",
+                collection_title=collection.title,
+                collection_id=collection.ratingKey,
+                current_items=current_items,
             )
 
-        # Remove items from the collection
         collection.removeItems(items_to_remove)
 
-        return json.dumps(
-            {
-                "removed": True,
-                "title": collection.title,
-                "items_removed": [item.title for item in items_to_remove],
-                "items_not_found": not_found,
-                "remaining_items": len(collection.items()),
-            },
-            indent=4,
+        return CollectionRemoveResponse(
+            removed=True,
+            title=collection.title,
+            items_removed=[item.title for item in items_to_remove],
+            items_not_found=not_found,
+            remaining_items=len(collection.items()),
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
 @mcp.tool(
     name="collection_delete",
     description="Delete a collection from the Plex server",
-    meta={"access": ToolTag.DELETE.value}
+    tags={ToolTag.DELETE.value},
+    annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True)
 )
 async def collection_delete(
     collection_title: str | None = None,
     collection_id: int | None = None,
     library_name: str | None = None,
-) -> str:
+) -> CollectionDeleteResponse | ErrorResponse:
     """Delete a collection.
 
     Args:
@@ -650,20 +588,14 @@ async def collection_delete(
     try:
         plex = connect_to_plex()
 
-        # Validate that at least one identifier is provided
         if not collection_id and not collection_title:
-            return json.dumps(
-                {"error": "Either collection_id or collection_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either collection_id or collection_title must be provided")
 
-        # If collection_id is provided, use it to directly fetch the collection
         if collection_id:
             try:
-                # Try fetching by ratingKey first
                 try:
                     collection = plex.fetchItem(collection_id)
                 except Exception:
-                    # If that fails, try finding by key in all libraries
                     collection = None
                     for section in plex.library.sections():
                         if section.type in ["movie", "show"]:
@@ -678,34 +610,23 @@ async def collection_delete(
                                 continue
 
                 if not collection:
-                    return json.dumps(
-                        {"error": f"Collection with ID '{collection_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Collection with ID '{collection_id}' not found")
 
-                # Get the collection title to return in the message
                 collection_title_to_return = collection.title
-
-                # Delete the collection
                 collection.delete()
 
-                # Return a simple object with the result
-                return json.dumps({"deleted": True, "title": collection_title_to_return}, indent=4)
+                return CollectionDeleteResponse(deleted=True, title=collection_title_to_return)
             except Exception as e:
-                return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
 
-        # If we get here, we're searching by title
         if not library_name:
-            return json.dumps(
-                {"error": "Library name is required when deleting by collection title"}, indent=4
-            )
+            return ErrorResponse(message="Library name is required when deleting by collection title")
 
-        # Find the library
         try:
             library = plex.library.section(library_name)
         except NotFound:
-            return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+            return ErrorResponse(message=f"Library '{library_name}' not found")
 
-        # Find matching collections
         matching_collections = [
             c
             for c in library.collections()
@@ -713,43 +634,40 @@ async def collection_delete(
         ]
 
         if not matching_collections:
-            return json.dumps(
-                {"error": f"Collection '{collection_title}' not found in library '{library_name}'"},
-                indent=4,
+            return ErrorResponse(
+                message=f"Collection '{collection_title}' not found in library '{library_name}'"
             )
 
-        # If multiple matching collections, return list of matches with IDs
         if len(matching_collections) > 1:
-            matches = []
-            for c in matching_collections:
-                matches.append(
-                    {
-                        "title": c.title,
-                        "id": c.ratingKey,
-                        "library": library_name,
-                        "item_count": c.childCount if hasattr(c, "childCount") else len(c.items()),
-                    }
-                )
+            matches = [
+                {
+                    "title": c.title,
+                    "id": c.ratingKey,
+                    "library": library_name,
+                    "item_count": c.childCount if hasattr(c, "childCount") else len(c.items()),
+                }
+                for c in matching_collections
+            ]
 
-            # Return as a direct array like playlist_list
-            return json.dumps(matches, indent=4)
+            return CollectionDeleteResponse(
+                status="multiple_matches",
+                multiple_collections=matches
+            )
 
         collection = matching_collections[0]
         collection_title_to_return = collection.title
-
-        # Delete the collection
         collection.delete()
 
-        # Return a simple object with the result
-        return json.dumps({"deleted": True, "title": collection_title_to_return}, indent=4)
+        return CollectionDeleteResponse(deleted=True, title=collection_title_to_return)
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
 @mcp.tool(
     name="collection_edit",
     description="Edit collection metadata (title, summary, sorting)",
-    meta={"access": ToolTag.WRITE.value}
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True)
 )
 async def collection_edit(
     collection_title: str | None = None,
@@ -767,7 +685,7 @@ async def collection_edit(
     background_path: str | None = None,
     background_url: str | None = None,
     new_advanced_settings: dict[str, Any] | None = None,
-) -> str:
+) -> CollectionEditResponse | ErrorResponse:
     """Comprehensively edit a collection's attributes.
 
     Args:
@@ -790,23 +708,16 @@ async def collection_edit(
     try:
         plex = connect_to_plex()
 
-        # Validate that at least one identifier is provided
         if not collection_id and not collection_title:
-            return json.dumps(
-                {"error": "Either collection_id or collection_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either collection_id or collection_title must be provided")
 
-        # Find the collection
         collection = None
 
-        # If collection_id is provided, use it to directly fetch the collection
         if collection_id:
             try:
-                # Try fetching by ratingKey first
                 try:
                     collection = plex.fetchItem(collection_id)
                 except Exception:
-                    # If that fails, try finding by key in all libraries
                     collection = None
                     for section in plex.library.sections():
                         if section.type in ["movie", "show"]:
@@ -821,25 +732,18 @@ async def collection_edit(
                                 continue
 
                 if not collection:
-                    return json.dumps(
-                        {"error": f"Collection with ID '{collection_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Collection with ID '{collection_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching collection by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
-            # If we get here, we're searching by title
             if not library_name:
-                return json.dumps(
-                    {"error": "Library name is required when editing by collection title"}, indent=4
-                )
+                return ErrorResponse(message="Library name is required when editing by collection title")
 
-            # Find the library
             try:
                 library = plex.library.section(library_name)
             except NotFound:
-                return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
-            # Find matching collections
             matching_collections = [
                 c
                 for c in library.collections()
@@ -847,37 +751,31 @@ async def collection_edit(
             ]
 
             if not matching_collections:
-                return json.dumps(
-                    {
-                        "error": f"Collection '{collection_title}' not found in library '{library_name}'"
-                    },
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Collection '{collection_title}' not found in library '{library_name}'"
                 )
 
-            # If multiple matching collections, return list of matches with IDs
             if len(matching_collections) > 1:
-                matches = []
-                for c in matching_collections:
-                    matches.append(
-                        {
-                            "title": c.title,
-                            "id": c.ratingKey,
-                            "library": library_name,
-                            "item_count": c.childCount
-                            if hasattr(c, "childCount")
-                            else len(c.items()),
-                        }
-                    )
+                matches = [
+                    {
+                        "title": c.title,
+                        "id": c.ratingKey,
+                        "library": library_name,
+                        "item_count": c.childCount
+                        if hasattr(c, "childCount")
+                        else len(c.items()),
+                    }
+                    for c in matching_collections
+                ]
 
-                # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return CollectionEditResponse(
+                    status="multiple_matches",
+                    multiple_collections=matches
+                )
 
             collection = matching_collections[0]
 
-        # Track changes
         changes = []
-
-        # Edit basic attributes
         edit_params = {}
 
         if new_title is not None and new_title != collection.title:
@@ -902,21 +800,17 @@ async def collection_edit(
                 edit_params["contentRating"] = new_content_rating
                 changes.append(f"content rating to '{new_content_rating}'")
 
-        # Apply the basic edits if any parameters were set
         if edit_params:
             collection.edit(**edit_params)
 
-        # Handle labels
         current_labels = getattr(collection, "labels", [])
 
         if new_labels is not None:
-            # Replace all labels
             collection.removeLabel(current_labels)
             if new_labels:
                 collection.addLabel(new_labels)
             changes.append("labels completely replaced")
         else:
-            # Handle adding and removing individual labels
             if add_labels:
                 for label in add_labels:
                     if label not in current_labels:
@@ -929,7 +823,6 @@ async def collection_edit(
                         collection.removeLabel(label)
                 changes.append(f"removed labels: {', '.join(remove_labels)}")
 
-        # Handle artwork
         if poster_path:
             collection.uploadPoster(filepath=poster_path)
             changes.append("poster (from file)")
@@ -944,30 +837,22 @@ async def collection_edit(
             collection.uploadArt(url=background_url)
             changes.append("background art (from URL)")
 
-        # Handle advanced settings
         if new_advanced_settings:
             for key, value in new_advanced_settings.items():
                 try:
                     setattr(collection, key, value)
                     changes.append(f"advanced setting '{key}'")
                 except Exception as setting_error:
-                    return json.dumps(
-                        {
-                            "error": f"Error setting advanced parameter '{key}': {str(setting_error)}"
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Error setting advanced parameter '{key}': {str(setting_error)}"
                     )
 
         if not changes:
-            return json.dumps(
-                {"updated": False, "message": "No changes made to the collection"}, indent=4
-            )
+            return CollectionEditResponse(updated=False, message="No changes made to the collection")
 
-        # Get the collection title for the response (use new_title if it was changed)
         collection_title_to_return = new_title if new_title else collection.title
 
-        return json.dumps(
-            {"updated": True, "title": collection_title_to_return, "changes": changes}, indent=4
-        )
+        return CollectionEditResponse(updated=True, title=collection_title_to_return, changes=changes)
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
+
