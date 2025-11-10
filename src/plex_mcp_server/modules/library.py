@@ -1,13 +1,30 @@
 import asyncio
-import json
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urljoin
 
 import aiohttp
 from aiohttp import ClientSession
+from mcp.types import ToolAnnotations
 from plexapi.exceptions import NotFound
 from plexapi.server import PlexServer
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    ErrorResponse,
+    LibraryContentItem,
+    LibraryContentsResponse,
+    LibraryDetailsResponse,
+    LibraryInfo,
+    LibraryListResponse,
+    LibraryRecentlyAddedResponse,
+    LibraryRefreshResponse,
+    LibraryScanResponse,
+    LibraryStatsResponse,
+    MovieStats,
+    MusicStats,
+    RecentlyAddedItem,
+    ShowStats,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
@@ -27,8 +44,13 @@ async def async_get_json(
         return await response.json()
 
 
-@mcp.tool()
-async def library_list() -> str:
+@mcp.tool(
+    name="library_list",
+    description="List all available libraries on the Plex server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def library_list() -> LibraryListResponse | ErrorResponse:
     """List all available libraries on the Plex server."""
     try:
         plex = connect_to_plex()
@@ -36,26 +58,31 @@ async def library_list() -> str:
         libraries = plex_library.sections()
 
         if not libraries:
-            return json.dumps({"message": "No libraries found on your Plex server."})
+            return LibraryListResponse(message="No libraries found on your Plex server.")
 
         libraries_dict = {}
         for lib in libraries:
-            libraries_dict[lib.title] = {
-                "type": lib.type,
-                "libraryId": lib.key,
-                "totalSize": lib.totalSize,
-                "uuid": lib.uuid,
-                "locations": lib.locations,
-                "updatedAt": lib.updatedAt.isoformat(),
-            }
+            libraries_dict[lib.title] = LibraryInfo(
+                type=lib.type,
+                library_id=str(lib.key),
+                total_size=lib.totalSize,
+                uuid=lib.uuid,
+                locations=lib.locations,
+                updated_at=lib.updatedAt.isoformat(),
+            )
 
-        return json.dumps(libraries_dict)
+        return LibraryListResponse(libraries=libraries_dict)
     except Exception as e:
-        return json.dumps({"error": f"Error listing libraries: {str(e)}"})
+        return ErrorResponse(message=f"Error listing libraries: {str(e)}")
 
 
-@mcp.tool()
-async def library_get_stats(library_name: str) -> str:
+@mcp.tool(
+    name="library_get_stats",
+    description="Get statistics for a specific library",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorResponse:
     """Get statistics for a specific library.
 
     Args:
@@ -67,7 +94,6 @@ async def library_get_stats(library_name: str) -> str:
         headers = get_plex_headers(plex)
 
         async with aiohttp.ClientSession() as session:
-            # First get library sections
             sections_url = urljoin(base_url, "library/sections")
             sections_data = await async_get_json(session, sections_url, headers)
 
@@ -78,17 +104,10 @@ async def library_get_stats(library_name: str) -> str:
                     break
 
             if not target_section:
-                return json.dumps({"error": f"Library '{library_name}' not found"})
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
             section_id = target_section["key"]
             library_type = target_section["type"]
-
-            # Create base result
-            result = {
-                "name": target_section["title"],
-                "type": library_type,
-                "totalItems": target_section.get("totalSize", 0),
-            }
 
             # Prepare URLs for concurrent requests
             all_items_url = urljoin(base_url, f"library/sections/{section_id}/all")
@@ -103,63 +122,57 @@ async def library_get_stats(library_name: str) -> str:
             unwatched_data = unwatched_data["MediaContainer"]
 
             if library_type == "movie":
-                movie_stats = {
-                    "count": all_data.get("size", 0),
-                    "unwatched": unwatched_data.get("size", 0),
-                }
-
-                # Get genres, directors, studios stats
                 genres: dict[str, int] = {}
                 directors: dict[str, int] = {}
                 studios: dict[str, int] = {}
                 decades: dict[int, int] = {}
 
                 for movie in all_data.get("Metadata", []):
-                    # Process genres
                     for genre in movie.get("Genre", []):
                         genre_name = genre["tag"]
                         genres[genre_name] = genres.get(genre_name, 0) + 1
 
-                    # Process directors
                     for director in movie.get("Director", []):
                         director_name = director["tag"]
                         directors[director_name] = directors.get(director_name, 0) + 1
 
-                    # Process studios
                     studio = movie.get("studio")
                     if studio:
                         studios[studio] = studios.get(studio, 0) + 1
 
-                    # Process decades
                     year = movie.get("year")
                     if year:
                         decade = (year // 10) * 10
                         decades[decade] = decades.get(decade, 0) + 1
 
-                # Add top items to results
-                if genres:
-                    movie_stats["topGenres"] = dict(
-                        sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5]
-                    )
-                if directors:
-                    movie_stats["topDirectors"] = dict(
+                movie_stats = MovieStats(
+                    count=all_data.get("size", 0),
+                    unwatched=unwatched_data.get("size", 0),
+                    top_genres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if genres
+                    else None,
+                    top_directors=dict(
                         sorted(directors.items(), key=lambda x: x[1], reverse=True)[:5]
                     )
-                if studios:
-                    movie_stats["topStudios"] = dict(
-                        sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5]
-                    )
-                if decades:
-                    movie_stats["byDecade"] = dict(sorted(decades.items()))
+                    if directors
+                    else None,
+                    top_studios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if studios
+                    else None,
+                    by_decade=dict(sorted(decades.items())) if decades else None,
+                )
 
-                result["movieStats"] = movie_stats
+                return LibraryStatsResponse(
+                    name=target_section["title"],
+                    type=library_type,
+                    total_items=target_section.get("totalSize", 0),
+                    movie_stats=movie_stats,
+                )
 
             elif library_type == "show":
-                # Prepare URLs for concurrent requests
                 seasons_url = urljoin(base_url, f"library/sections/{section_id}/all?type=3")
                 episodes_url = urljoin(base_url, f"library/sections/{section_id}/all?type=4")
 
-                # Make concurrent requests for seasons and episodes
                 seasons_data, episodes_data = await asyncio.gather(
                     async_get_json(session, seasons_url, headers),
                     async_get_json(session, episodes_url, headers),
@@ -167,66 +180,56 @@ async def library_get_stats(library_name: str) -> str:
                 seasons_data = seasons_data["MediaContainer"]
                 episodes_data = episodes_data["MediaContainer"]
 
-                # Process show stats
                 genres = {}
                 studios = {}
                 decades = {}
 
                 for show in all_data.get("Metadata", []):
-                    # Process genres
                     for genre in show.get("Genre", []):
                         genre_name = genre["tag"]
                         genres[genre_name] = genres.get(genre_name, 0) + 1
 
-                    # Process studios
                     studio = show.get("studio")
                     if studio:
                         studios[studio] = studios.get(studio, 0) + 1
 
-                    # Process decades
                     year = show.get("year")
                     if year:
                         decade = (year // 10) * 10
                         decades[decade] = decades.get(decade, 0) + 1
 
-                show_stats = {
-                    "shows": all_data.get("size", 0),
-                    "seasons": seasons_data.get("size", 0),
-                    "episodes": episodes_data.get("size", 0),
-                    "unwatchedShows": unwatched_data.get("size", 0),
-                }
+                show_stats = ShowStats(
+                    shows=all_data.get("size", 0),
+                    seasons=seasons_data.get("size", 0),
+                    episodes=episodes_data.get("size", 0),
+                    unwatched_shows=unwatched_data.get("size", 0),
+                    top_genres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if genres
+                    else None,
+                    top_studios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if studios
+                    else None,
+                    by_decade=dict(sorted(decades.items())) if decades else None,
+                )
 
-                # Add top items to results
-                if genres:
-                    show_stats["topGenres"] = dict(
-                        sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5]
-                    )
-                if studios:
-                    show_stats["topStudios"] = dict(
-                        sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5]
-                    )
-                if decades:
-                    show_stats["byDecade"] = dict(sorted(decades.items()))
-
-                result["showStats"] = show_stats
+                return LibraryStatsResponse(
+                    name=target_section["title"],
+                    type=library_type,
+                    total_items=target_section.get("totalSize", 0),
+                    show_stats=show_stats,
+                )
 
             elif library_type == "artist":
-                # Initialize statistics
-                artist_stats = {
-                    "count": all_data.get("size", 0),
-                    "totalTracks": 0,
-                    "totalAlbums": 0,
-                    "totalPlays": 0,
-                }
+                total_tracks = 0
+                total_albums = 0
+                total_plays = 0
 
-                # Track data for statistics
                 all_genres: dict[str, int] = {}
                 all_years: dict[int, int] = {}
                 top_artists: dict[str, int] = {}
                 top_albums: dict[str, int] = {}
                 audio_formats: dict[str, int] = {}
 
-                # Process artists one by one for accurate stats
                 for artist in all_data.get("Metadata", []):
                     artist_id = artist.get("ratingKey")
                     artist_name = artist.get("title", "")
@@ -234,12 +237,10 @@ async def library_get_stats(library_name: str) -> str:
                     if not artist_id:
                         continue
 
-                    # Store artist views for top artists calculation
                     artist_view_count = 0
                     artist_albums = set()
                     artist_track_count = 0
 
-                    # Get tracks directly for this artist
                     artist_tracks_url = urljoin(
                         base_url, f"library/sections/{section_id}/all?artist.id={artist_id}&type=10"
                     )
@@ -250,37 +251,30 @@ async def library_get_stats(library_name: str) -> str:
                         and "Metadata" in artist_tracks_data["MediaContainer"]
                     ):
                         for track in artist_tracks_data["MediaContainer"]["Metadata"]:
-                            # Count total tracks
                             artist_track_count += 1
 
-                            # Count track views for this artist
                             track_views = track.get("viewCount", 0)
                             artist_view_count += track_views
-                            artist_stats["totalPlays"] += track_views
+                            total_plays += track_views
 
-                            # Add album to set
                             album_title = track.get("parentTitle")
                             if album_title:
                                 artist_albums.add(album_title)
 
-                                # Track album plays for top albums
                                 album_key = f"{artist_name} - {album_title}"
                                 if album_key not in top_albums:
                                     top_albums[album_key] = 0
                                 top_albums[album_key] += track_views
 
-                            # Process genres if available
                             if "Genre" in track:
                                 for genre in track.get("Genre", []):
                                     genre_name = genre["tag"]
                                     all_genres[genre_name] = all_genres.get(genre_name, 0) + 1
 
-                            # Process years instead of decades
                             year = track.get("parentYear") or track.get("year")
                             if year:
                                 all_years[year] = all_years.get(year, 0) + 1
 
-                            # Track audio formats
                             if (
                                 "Media" in track
                                 and track["Media"]
@@ -289,42 +283,62 @@ async def library_get_stats(library_name: str) -> str:
                                 audio_codec = track["Media"][0]["audioCodec"]
                                 audio_formats[audio_codec] = audio_formats.get(audio_codec, 0) + 1
 
-                    # Update top artists
                     if artist_track_count > 0:
                         top_artists[artist_name] = artist_view_count
 
-                    # Update totals
-                    artist_stats["totalTracks"] += artist_track_count
-                    artist_stats["totalAlbums"] += len(artist_albums)
+                    total_tracks += artist_track_count
+                    total_albums += len(artist_albums)
 
-                # Add top items to results
-                if all_genres:
-                    artist_stats["topGenres"] = dict(
+                music_stats = MusicStats(
+                    count=all_data.get("size", 0),
+                    total_tracks=total_tracks,
+                    total_albums=total_albums,
+                    total_plays=total_plays,
+                    top_genres=dict(
                         sorted(all_genres.items(), key=lambda x: x[1], reverse=True)[:10]
                     )
-                if top_artists:
-                    artist_stats["topArtists"] = dict(
+                    if all_genres
+                    else None,
+                    top_artists=dict(
                         sorted(top_artists.items(), key=lambda x: x[1], reverse=True)[:10]
                     )
-                if top_albums:
-                    artist_stats["topAlbums"] = dict(
+                    if top_artists
+                    else None,
+                    top_albums=dict(
                         sorted(top_albums.items(), key=lambda x: x[1], reverse=True)[:10]
                     )
-                if all_years:
-                    artist_stats["byYear"] = dict(sorted(all_years.items()))
-                if audio_formats:
-                    artist_stats["audioFormats"] = audio_formats
+                    if top_albums
+                    else None,
+                    by_year=dict(sorted(all_years.items())) if all_years else None,
+                    audio_formats=audio_formats if audio_formats else None,
+                )
 
-                result["musicStats"] = artist_stats
+                return LibraryStatsResponse(
+                    name=target_section["title"],
+                    type=library_type,
+                    total_items=target_section.get("totalSize", 0),
+                    music_stats=music_stats,
+                )
 
-            return json.dumps(result)
+            return LibraryStatsResponse(
+                name=target_section["title"],
+                type=library_type,
+                total_items=target_section.get("totalSize", 0),
+            )
 
     except Exception as e:
-        return json.dumps({"error": f"Error getting library stats: {str(e)}"})
+        return ErrorResponse(message=f"Error getting library stats: {str(e)}")
 
 
-@mcp.tool()
-async def library_refresh(library_name: str | None = None) -> str:
+@mcp.tool(
+    name="library_refresh",
+    description="Refresh a specific library or all libraries",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
+async def library_refresh(
+    library_name: str | None = None,
+) -> LibraryRefreshResponse | ErrorResponse:
     """Refresh a specific library or all libraries.
 
     Args:
@@ -334,43 +348,42 @@ async def library_refresh(library_name: str | None = None) -> str:
         plex = connect_to_plex()
 
         if library_name:
-            # Refresh a specific library
             section = None
             all_sections = plex.library.sections()
 
-            # Find the section with matching name (case-insensitive)
             for s in all_sections:
                 if s.title.lower() == library_name.lower():
                     section = s
                     break
 
             if not section:
-                return json.dumps(
-                    {
-                        "error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
-                    }
+                return ErrorResponse(
+                    message=f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
                 )
 
-            # Refresh the library
             section.refresh()
-            return json.dumps(
-                {
-                    "success": True,
-                    "message": f"Refreshing library '{section.title}'. This may take some time.",
-                }
+            return LibraryRefreshResponse(
+                success=True,
+                message=f"Refreshing library '{section.title}'. This may take some time.",
             )
         else:
-            # Refresh all libraries
             plex.library.refresh()
-            return json.dumps(
-                {"success": True, "message": "Refreshing all libraries. This may take some time."}
+            return LibraryRefreshResponse(
+                success=True, message="Refreshing all libraries. This may take some time."
             )
     except Exception as e:
-        return json.dumps({"error": f"Error refreshing library: {str(e)}"})
+        return ErrorResponse(message=f"Error refreshing library: {str(e)}")
 
 
-@mcp.tool()
-async def library_scan(library_name: str, path: str | None = None) -> str:
+@mcp.tool(
+    name="library_scan",
+    description="Scan a specific library or part of a library",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
+async def library_scan(
+    library_name: str, path: str | None = None
+) -> LibraryScanResponse | ErrorResponse:
     """Scan a specific library or part of a library.
 
     Args:
@@ -380,51 +393,47 @@ async def library_scan(library_name: str, path: str | None = None) -> str:
     try:
         plex = connect_to_plex()
 
-        # Find the specified library
         section = None
         all_sections = plex.library.sections()
 
-        # Find the section with matching name (case-insensitive)
         for s in all_sections:
             if s.title.lower() == library_name.lower():
                 section = s
                 break
 
         if not section:
-            return json.dumps(
-                {
-                    "error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
-                }
+            return ErrorResponse(
+                message=f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
             )
 
-        # Scan the library
         if path:
             try:
                 section.update(path=path)
-                return json.dumps(
-                    {
-                        "success": True,
-                        "message": f"Scanning path '{path}' in library '{section.title}'. This may take some time.",
-                    }
+                return LibraryScanResponse(
+                    success=True,
+                    message=f"Scanning path '{path}' in library '{section.title}'. This may take some time.",
                 )
             except NotFound:
-                return json.dumps(
-                    {"error": f"Path '{path}' not found in library '{section.title}'."}
+                return ErrorResponse(
+                    message=f"Path '{path}' not found in library '{section.title}'."
                 )
         else:
             section.update()
-            return json.dumps(
-                {
-                    "success": True,
-                    "message": f"Scanning library '{section.title}'. This may take some time.",
-                }
+            return LibraryScanResponse(
+                success=True,
+                message=f"Scanning library '{section.title}'. This may take some time.",
             )
     except Exception as e:
-        return json.dumps({"error": f"Error scanning library: {str(e)}"})
+        return ErrorResponse(message=f"Error scanning library: {str(e)}")
 
 
-@mcp.tool()
-async def library_get_details(library_name: str) -> str:
+@mcp.tool(
+    name="library_get_details",
+    description="Get detailed information about a specific library, including folder paths and settings",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def library_get_details(library_name: str) -> LibraryDetailsResponse | ErrorResponse:
     """Get detailed information about a specific library, including folder paths and settings.
 
     Args:
@@ -433,72 +442,74 @@ async def library_get_details(library_name: str) -> str:
     try:
         plex = connect_to_plex()
 
-        # Get all library sections
         all_sections = plex.library.sections()
         target_section = None
 
-        # Find the section with the matching name (case-insensitive)
         for section in all_sections:
             if section.title.lower() == library_name.lower():
                 target_section = section
                 break
 
         if not target_section:
-            return json.dumps(
-                {
-                    "error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
-                }
+            return ErrorResponse(
+                message=f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
             )
 
-        # Create the result dictionary
-        result = {
-            "name": target_section.title,
-            "type": target_section.type,
-            "uuid": target_section.uuid,
-            "totalItems": target_section.totalSize,
-            "locations": target_section.locations,
-            "agent": target_section.agent,
-            "scanner": target_section.scanner,
-            "language": target_section.language,
-        }
-
-        # Get additional attributes using _data
         data = target_section._data
 
-        # Add scanner settings if available
+        scanner_settings: dict[str, str] | None = None
         if "scannerSettings" in data:
-            scanner_settings = {}
+            temp_scanner = {}
             for setting in data["scannerSettings"]:
                 if "value" in setting:
-                    scanner_settings[setting.get("key", "unknown")] = setting["value"]
-            if scanner_settings:
-                result["scannerSettings"] = scanner_settings
+                    temp_scanner[setting.get("key", "unknown")] = setting["value"]
+            if temp_scanner:
+                scanner_settings = temp_scanner
 
-        # Add agent settings if available
+        agent_settings: dict[str, str] | None = None
         if "agentSettings" in data:
-            agent_settings = {}
+            temp_agent = {}
             for setting in data["agentSettings"]:
                 if "value" in setting:
-                    agent_settings[setting.get("key", "unknown")] = setting["value"]
-            if agent_settings:
-                result["agentSettings"] = agent_settings
+                    temp_agent[setting.get("key", "unknown")] = setting["value"]
+            if temp_agent:
+                agent_settings = temp_agent
 
-        # Add advanced settings if available
+        advanced_settings: dict[str, str] | None = None
         if "advancedSettings" in data:
-            advanced_settings = {}
+            temp_advanced = {}
             for setting in data["advancedSettings"]:
                 if "value" in setting:
-                    advanced_settings[setting.get("key", "unknown")] = setting["value"]
-            if advanced_settings:
-                result["advancedSettings"] = advanced_settings
+                    temp_advanced[setting.get("key", "unknown")] = setting["value"]
+            if temp_advanced:
+                advanced_settings = temp_advanced
 
-        return json.dumps(result)
+        return LibraryDetailsResponse(
+            name=target_section.title,
+            type=target_section.type,
+            uuid=target_section.uuid,
+            total_items=target_section.totalSize,
+            locations=target_section.locations,
+            agent=target_section.agent,
+            scanner=target_section.scanner,
+            language=target_section.language,
+            scanner_settings=scanner_settings,
+            agent_settings=agent_settings,
+            advanced_settings=advanced_settings,
+        )
     except Exception as e:
-        return json.dumps({"error": f"Error getting library details: {str(e)}"})
+        return ErrorResponse(message=f"Error getting library details: {str(e)}")
 
 
-@mcp.tool()
-async def library_get_recently_added(count: int = 50, library_name: str | None = None) -> str:
+@mcp.tool(
+    name="library_get_recently_added",
+    description="Get recently added media across all libraries or in a specific library",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def library_get_recently_added(
+    count: int = 50, library_name: str | None = None
+) -> LibraryRecentlyAddedResponse | ErrorResponse:
     """Get recently added media across all libraries or in a specific library.
 
     Args:
@@ -508,31 +519,23 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
     try:
         plex = connect_to_plex()
 
-        # Check if we need to filter by library
         if library_name:
-            # Find the specified library
             section = None
             all_sections = plex.library.sections()
 
-            # Find the section with matching name (case-insensitive)
             for s in all_sections:
                 if s.title.lower() == library_name.lower():
                     section = s
                     break
 
             if not section:
-                return json.dumps(
-                    {
-                        "error": f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
-                    }
+                return ErrorResponse(
+                    message=f"Library '{library_name}' not found. Available libraries: {', '.join([s.title for s in all_sections])}"
                 )
 
-            # Get recently added from this library
             recent = section.recentlyAdded(maxresults=count)
         else:
-            # Get recently added across all libraries
             recent = plex.library.recentlyAdded()
-            # Sort by date added (newest first) and limit to count
             if recent:
                 try:
                     from datetime import datetime
@@ -541,40 +544,37 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
                         recent, key=lambda x: getattr(x, "addedAt", datetime.min), reverse=True
                     )[:count]
                 except Exception:
-                    # If sorting fails, just take the first 'count' items
                     recent = recent[:count]
 
         if not recent:
-            return json.dumps({"message": "No recently added items found."})
+            return LibraryRecentlyAddedResponse(
+                count=0,
+                requested_count=count,
+                library=library_name if library_name else "All Libraries",
+                items={},
+            )
 
-        # Prepare the result
-        result: dict[str, Any] = {
-            "count": len(recent),
-            "requestedCount": count,
-            "library": library_name if library_name else "All Libraries",
-            "items": {},
-        }
+        items_by_type: dict[str, list[dict[str, Any] | RecentlyAddedItem]] = {}
 
-        # Group results by type
         for item in recent:
             item_type = getattr(item, "type", "unknown")
-            if item_type not in result["items"]:
-                result["items"][item_type] = []
+            if item_type not in items_by_type:
+                items_by_type[item_type] = []
 
             try:
                 added_at = str(getattr(item, "addedAt", "Unknown date"))
 
                 if item_type == "movie" or item_type == "show":
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {
                             "title": item.title,
-                            "year": getattr(item, "year", ""),
+                            "year": str(getattr(item, "year", "")),
                             "addedAt": added_at,
                         }
                     )
 
                 elif item_type == "season":
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {
                             "showTitle": getattr(item, "parentTitle", "Unknown Show"),
                             "seasonNumber": getattr(item, "index", "?"),
@@ -583,7 +583,7 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
                     )
 
                 elif item_type == "episode":
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {
                             "showTitle": getattr(item, "grandparentTitle", "Unknown Show"),
                             "seasonNumber": getattr(item, "parentIndex", "?"),
@@ -594,10 +594,10 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
                     )
 
                 elif item_type == "artist":
-                    result["items"][item_type].append({"title": item.title, "addedAt": added_at})
+                    items_by_type[item_type].append({"title": item.title, "addedAt": added_at})
 
                 elif item_type == "album":
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {
                             "artist": getattr(item, "parentTitle", "Unknown Artist"),
                             "title": item.title,
@@ -606,7 +606,7 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
                     )
 
                 elif item_type == "track":
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {
                             "artist": getattr(item, "grandparentTitle", "Unknown Artist"),
                             "album": getattr(item, "parentTitle", "Unknown Album"),
@@ -616,31 +616,36 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
                     )
 
                 else:
-                    # Generic handler for other types
-                    result["items"][item_type].append(
+                    items_by_type[item_type].append(
                         {"title": getattr(item, "title", "Unknown"), "addedAt": added_at}
                     )
 
             except Exception as format_error:
-                # If there's an error formatting a particular item, just output basic info
-                result["items"][item_type].append(
+                items_by_type[item_type].append(
                     {"title": getattr(item, "title", "Unknown"), "error": str(format_error)}
                 )
 
-        return json.dumps(result)
+        return LibraryRecentlyAddedResponse(
+            count=len(recent),
+            requested_count=count,
+            library=library_name if library_name else "All Libraries",
+            items=items_by_type,
+        )
     except Exception as e:
-        return json.dumps({"error": f"Error getting recently added items: {str(e)}"})
+        return ErrorResponse(message=f"Error getting recently added items: {str(e)}")
 
 
-@mcp.tool()
-async def library_get_contents(library_name: str) -> str:
+@mcp.tool(
+    name="library_get_contents",
+    description="Get the full contents of a specific library",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def library_get_contents(library_name: str) -> LibraryContentsResponse | ErrorResponse:
     """Get the full contents of a specific library.
 
     Args:
         library_name: Name of the library to get contents from
-
-    Returns:
-        String listing all items in the library
     """
     try:
         plex = connect_to_plex()
@@ -648,7 +653,6 @@ async def library_get_contents(library_name: str) -> str:
         headers = get_plex_headers(plex)
 
         async with aiohttp.ClientSession() as session:
-            # First get library sections
             sections_url = urljoin(base_url, "library/sections")
             sections_data = await async_get_json(session, sections_url, headers)
 
@@ -659,34 +663,24 @@ async def library_get_contents(library_name: str) -> str:
                     break
 
             if not target_section:
-                return json.dumps({"error": f"Library '{library_name}' not found"})
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
             section_id = target_section["key"]
             library_type = target_section["type"]
 
-            # Get all items
             all_items_url = urljoin(base_url, f"library/sections/{section_id}/all")
             all_data = await async_get_json(session, all_items_url, headers)
             all_data = all_data["MediaContainer"]
 
-            # Prepare the result
-            result = {
-                "name": target_section["title"],
-                "type": library_type,
-                "totalItems": all_data.get("size", 0),
-                "items": [],
-            }
+            items: list[LibraryContentItem | dict[str, Any]] = []
 
-            # Process items based on library type
             if library_type == "movie":
                 for item in all_data.get("Metadata", []):
                     year = item.get("year", "Unknown")
                     duration = item.get("duration", 0)
-                    # Convert duration from milliseconds to hours and minutes
                     hours, remainder = divmod(duration // 1000, 3600)
                     minutes, _ = divmod(remainder, 60)
 
-                    # Get media info
                     media_info = {}
                     if "Media" in item:
                         media = item["Media"][0] if item["Media"] else {}
@@ -695,10 +689,9 @@ async def library_get_contents(library_name: str) -> str:
                         if resolution and codec:
                             media_info = {"resolution": resolution, "codec": codec}
 
-                    # Check if watched
                     watched = item.get("viewCount", 0) > 0
 
-                    result["items"].append(
+                    items.append(
                         {
                             "title": item.get("title", ""),
                             "year": year,
@@ -709,7 +702,6 @@ async def library_get_contents(library_name: str) -> str:
                     )
 
             elif library_type == "show":
-                # Get all shows metadata in parallel
                 show_urls = [
                     (item["ratingKey"], urljoin(base_url, f"library/metadata/{item['ratingKey']}"))
                     for item in all_data.get("Metadata", [])
@@ -730,7 +722,7 @@ async def library_get_contents(library_name: str) -> str:
                         episode_count > 0 and show_data.get("viewedLeafCount", 0) == episode_count
                     )
 
-                    result["items"].append(
+                    items.append(
                         {
                             "title": item.get("title", ""),
                             "year": year,
@@ -741,7 +733,6 @@ async def library_get_contents(library_name: str) -> str:
                     )
 
             elif library_type == "artist":
-                # Process artists one by one for more accurate track/album counting
                 artists_info = {}
 
                 for artist in all_data.get("Metadata", []):
@@ -751,17 +742,14 @@ async def library_get_contents(library_name: str) -> str:
                     if not artist_id:
                         continue
 
-                    # Store the original artist viewCount and skipCount as fallback
                     orig_view_count = artist.get("viewCount", 0)
                     orig_skip_count = artist.get("skipCount", 0)
 
-                    # Get tracks directly for this artist
                     artist_tracks_url = urljoin(
                         base_url, f"library/sections/{section_id}/all?artist.id={artist_id}&type=10"
                     )
                     artist_tracks_data = await async_get_json(session, artist_tracks_url, headers)
 
-                    # Initialize artist data
                     if artist_name not in artists_info:
                         artists_info[artist_name] = {
                             "title": artist_name,
@@ -771,7 +759,6 @@ async def library_get_contents(library_name: str) -> str:
                             "skipCount": 0,
                         }
 
-                    # Count tracks and albums from the track-level data
                     track_view_count = 0
                     track_skip_count = 0
                     if (
@@ -779,18 +766,14 @@ async def library_get_contents(library_name: str) -> str:
                         and "Metadata" in artist_tracks_data["MediaContainer"]
                     ):
                         for track in artist_tracks_data["MediaContainer"]["Metadata"]:
-                            # Count each track
                             artists_info[artist_name]["trackCount"] += 1
 
-                            # Add album to set (to get unique album count)
                             if "parentTitle" in track and track["parentTitle"]:
                                 artists_info[artist_name]["albums"].add(track["parentTitle"])
 
-                            # Count views and skips
                             track_view_count += track.get("viewCount", 0)
                             track_skip_count += track.get("skipCount", 0)
 
-                    # Use the sum of track counts if they're non-zero, otherwise fall back to artist level counts
                     artists_info[artist_name]["viewCount"] = (
                         track_view_count if track_view_count > 0 else orig_view_count
                     )
@@ -798,9 +781,8 @@ async def library_get_contents(library_name: str) -> str:
                         track_skip_count if track_skip_count > 0 else orig_skip_count
                     )
 
-                # Convert album sets to counts and add to results
                 for _artist_name, info in artists_info.items():
-                    result["items"].append(
+                    items.append(
                         {
                             "title": info["title"],
                             "albumCount": len(info["albums"]),
@@ -811,11 +793,15 @@ async def library_get_contents(library_name: str) -> str:
                     )
 
             else:
-                # Generic handler for other types
                 for item in all_data.get("Metadata", []):
-                    result["items"].append({"title": item.get("title", "")})
+                    items.append({"title": item.get("title", "")})
 
-            return json.dumps(result)
+            return LibraryContentsResponse(
+                name=target_section["title"],
+                type=library_type,
+                total_items=all_data.get("size", 0),
+                items=items,
+            )
 
     except Exception as e:
-        return json.dumps({"error": f"Error getting library contents: {str(e)}"})
+        return ErrorResponse(message=f"Error getting library contents: {str(e)}")

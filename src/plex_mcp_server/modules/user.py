@@ -1,4 +1,3 @@
-import json
 import os
 import time
 from datetime import datetime
@@ -6,9 +5,19 @@ from typing import TYPE_CHECKING, Any, cast
 
 import requests
 from dotenv import load_dotenv
+from mcp.types import ToolAnnotations
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    ErrorResponse,
+    UserDetailsResponse,
+    UserOnDeckResponse,
+    UserSearchResponse,
+    UserStatisticsResponse,
+    UserWatchHistoryResponse,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
@@ -19,8 +28,13 @@ PLEX_USERNAME = os.environ.get("PLEX_USERNAME", None)
 print("Successfully loaded environment variables from .env file")
 
 
-@mcp.tool()
-async def user_search_users(search_term: str | None = None) -> str:
+@mcp.tool(
+    name="user_search_users",
+    description="Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def user_search_users(search_term: str | None = None) -> UserSearchResponse | ErrorResponse:
     """Search for users with names, usernames, or emails containing the search term, or list all users if no search term is provided.
 
     Args:
@@ -63,15 +77,10 @@ async def user_search_users(search_term: str | None = None) -> str:
                     found_users.append(user)
 
             if not found_users:
-                return json.dumps({"message": f"No users found matching '{search_term}'."})
+                return UserSearchResponse(message=f"No users found matching '{search_term}'.")
 
             # Format the output for found users
-            result: dict[str, Any] = {
-                "searchTerm": search_term,
-                "usersFound": len(found_users),
-                "users": [],
-            }
-
+            users_list = []
             for user in found_users:
                 is_owner = user.username == account.username
                 user_data = {
@@ -91,33 +100,25 @@ async def user_search_users(search_term: str | None = None) -> str:
 
                     user_data["libraries"] = sections if sections else []
 
-                result["users"].append(user_data)
+                users_list.append(user_data)
 
-            return json.dumps(result)
+            return UserSearchResponse(
+                search_term=search_term,
+                users_found=len(found_users),
+                users=users_list,
+            )
         else:
             # List all users
             if not all_users:
-                return json.dumps(
-                    {
-                        "message": "No shared users found. Only your account has access to this Plex server."
-                    }
+                return UserSearchResponse(
+                    message="No shared users found. Only your account has access to this Plex server."
                 )
 
             # Format the output for all users
-            result = {
-                "totalUsers": len(all_users),
-                "owner": {
-                    "username": account.username,
-                    "email": account.email,
-                    "title": account.title,
-                },
-                "sharedUsers": [],
-            }
-
-            # Add all the shared users
+            shared_users_list = []
             for user in all_users:
                 if user.username != account.username:
-                    result["sharedUsers"].append(
+                    shared_users_list.append(
                         {
                             "username": user.username,
                             "email": user.email if hasattr(user, "email") else None,
@@ -125,13 +126,28 @@ async def user_search_users(search_term: str | None = None) -> str:
                         }
                     )
 
-            return json.dumps(result)
+            return UserSearchResponse(
+                total_users=len(all_users),
+                owner={
+                    "username": account.username,
+                    "email": account.email,
+                    "title": account.title,
+                },
+                shared_users=shared_users_list,
+            )
     except Exception as e:
-        return json.dumps({"error": f"Error searching users: {str(e)}"})
+        return ErrorResponse(message=f"Error searching users: {str(e)}")
 
 
-@mcp.tool()
-async def user_get_info(username: str | None = PLEX_USERNAME) -> str:
+@mcp.tool(
+    name="user_get_info",
+    description="Get detailed information about a specific Plex user",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def user_get_info(
+    username: str | None = PLEX_USERNAME,
+) -> UserDetailsResponse | ErrorResponse:
     """Get detailed information about a specific Plex user.
 
     Args:
@@ -151,7 +167,7 @@ async def user_get_info(username: str | None = PLEX_USERNAME) -> str:
                 "email": account.email,
                 "title": account.title,
                 "uuid": account.uuid,
-                "authToken": f"{account.authenticationToken[:5]}...{account.authenticationToken[-5:]} (truncated for security)",
+                "auth_token": f"{account.authenticationToken[:5]}...{account.authenticationToken[-5:]} (truncated for security)",
                 "subscription": {"active": account.subscriptionActive},
             }
 
@@ -175,9 +191,9 @@ async def user_get_info(username: str | None = PLEX_USERNAME) -> str:
                 except Exception:
                     result["devices"] = None
 
-            result["joinedAt"] = str(account.joinedAt)
+            result["joined_at"] = str(account.joinedAt)
 
-            return json.dumps(result)
+            return UserDetailsResponse(**result)
 
         # Search for the user in the friends list
         target_user: MyPlexUser | None = None
@@ -188,34 +204,45 @@ async def user_get_info(username: str | None = PLEX_USERNAME) -> str:
                 break
 
         if not target_user:
-            return json.dumps({"error": f"User '{username}' not found among shared users."})
+            return ErrorResponse(message=f"User '{username}' not found among shared users.")
 
         # Format the output
-        result = {
-            "role": "Shared User",
-            "username": target_user.username,
-            "email": target_user.email if hasattr(target_user, "email") else None,
-            "title": target_user.title if hasattr(target_user, "title") else target_user.username,
-            "id": target_user.id if hasattr(target_user, "id") else None,
-        }
-
+        server_access = None
         # Add servers and sections this user has access to
         if hasattr(target_user, "servers"):
-            result["serverAccess"] = []
+            server_access = []
             for server in target_user.servers:
                 if server.name == account.title or server.name == account.username:
                     server_data = {"name": server.name, "libraries": []}
                     for section in server.sections():
                         server_data["libraries"].append(section.title)
-                    result["serverAccess"].append(server_data)
+                    server_access.append(server_data)
 
-        return json.dumps(result)
+        user_id = None
+        if hasattr(target_user, "id") and target_user.id is not None:
+            user_id = int(target_user.id) if isinstance(target_user.id, (int, float)) else None
+
+        return UserDetailsResponse(
+            role="Shared User",
+            username=target_user.username,
+            email=target_user.email if hasattr(target_user, "email") else None,
+            title=target_user.title if hasattr(target_user, "title") else target_user.username,
+            id=user_id,
+            server_access=server_access,
+        )
     except Exception as e:
-        return json.dumps({"error": f"Error getting user info: {str(e)}"})
+        return ErrorResponse(message=f"Error getting user info: {str(e)}")
 
 
-@mcp.tool()
-async def user_get_on_deck(username: str | None = PLEX_USERNAME) -> str:
+@mcp.tool(
+    name="user_get_on_deck",
+    description="Get on deck (in progress) media for a specific user",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def user_get_on_deck(
+    username: str | None = PLEX_USERNAME,
+) -> UserOnDeckResponse | ErrorResponse:
     """Get on deck (in progress) media for a specific user.
 
     Args:
@@ -250,25 +277,28 @@ async def user_get_on_deck(username: str | None = PLEX_USERNAME) -> str:
                         break
 
                 if not target_user:
-                    return json.dumps({"error": f"User '{username}' not found."})
+                    return ErrorResponse(message=f"User '{username}' not found.")
 
                 # For a shared user, try to switch to that user and get their on-deck items
                 # This requires admin privileges and may be limited by Plex server's capabilities
                 user_token = target_user.get_token(plex.machineIdentifier)
                 if not user_token:
-                    return json.dumps(
-                        {
-                            "error": f"Unable to access on-deck items for user '{username}'. Token not available."
-                        }
+                    return ErrorResponse(
+                        message=f"Unable to access on-deck items for user '{username}'. Token not available."
                     )
 
                 user_plex = PlexServer(plex._baseurl, user_token)
                 on_deck_items = user_plex.library.onDeck()
             except Exception as user_err:
-                return json.dumps({"error": f"Error accessing user '{username}': {str(user_err)}"})
+                return ErrorResponse(message=f"Error accessing user '{username}': {str(user_err)}")
 
         if not on_deck_items:
-            return json.dumps({"message": f"No on-deck items found for user '{username}'."})
+            return UserOnDeckResponse(
+                username=username or "",
+                count=0,
+                items=[],
+                message=f"No on-deck items found for user '{username}'.",
+            )
 
         result: dict[str, Any] = {"username": username, "count": len(on_deck_items), "items": []}
 
@@ -303,15 +333,20 @@ async def user_get_on_deck(username: str | None = PLEX_USERNAME) -> str:
 
             result["items"].append(item_data)
 
-        return json.dumps(result)
+        return UserOnDeckResponse(**result)
     except Exception as e:
-        return json.dumps({"error": f"Error getting on-deck items: {str(e)}"})
+        return ErrorResponse(message=f"Error getting on-deck items: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="user_get_watch_history",
+    description="Get recent watch history for a specific user",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def user_get_watch_history(
     username: str | None = PLEX_USERNAME, limit: int = 10, content_type: str | None = None
-) -> str:
+) -> UserWatchHistoryResponse | ErrorResponse:
     """Get recent watch history for a specific user.
 
     Args:
@@ -348,7 +383,7 @@ async def user_get_watch_history(
                         break
 
                 if not target_user:
-                    return json.dumps({"error": f"User '{username}' not found."})
+                    return ErrorResponse(message=f"User '{username}' not found.")
 
                 # For a shared user, use accountID to filter history
                 history_items = plex.history(
@@ -390,7 +425,14 @@ async def user_get_watch_history(
             message = f"No watch history found for user '{username}'"
             if content_type:
                 message += f" with content type '{content_type}'"
-            return json.dumps({"message": message})
+            return UserWatchHistoryResponse(
+                username=username or "",
+                count=0,
+                requested_limit=limit,
+                content_type=content_type,
+                items=[],
+                message=message,
+            )
 
         # Format the results
         result: dict[str, Any] = {
@@ -427,15 +469,20 @@ async def user_get_watch_history(
 
             result["items"].append(item_data)
 
-        return json.dumps(result)
+        return UserWatchHistoryResponse(**result)
     except Exception as e:
-        return json.dumps({"error": f"Error getting watch history: {str(e)}"})
+        return ErrorResponse(message=f"Error getting watch history: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="user_get_statistics",
+    description="Get statistics about user watch activity over different time periods",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def user_get_statistics(
     time_period: str = "last_24_hours", username: str | None = None
-) -> str:
+) -> UserStatisticsResponse | ErrorResponse:
     """Get statistics about user watch activity over different time periods.
 
     Args:
@@ -461,8 +508,8 @@ async def user_get_statistics(
         }
 
         if time_period not in time_mapping:
-            return json.dumps(
-                {"error": f"Invalid time period. Choose from: {', '.join(time_mapping.keys())}"}
+            return ErrorResponse(
+                message=f"Invalid time period. Choose from: {', '.join(time_mapping.keys())}"
             )
 
         # Build the statistics URL
@@ -475,7 +522,7 @@ async def user_get_statistics(
         # Make the request to get statistics
         response = requests.get(stats_url, headers=headers)
         if response.status_code != 200:
-            return json.dumps({"error": f"Failed to fetch statistics: HTTP {response.status_code}"})
+            return ErrorResponse(message=f"Failed to fetch statistics: HTTP {response.status_code}")
 
         data = response.json()
 
@@ -538,7 +585,7 @@ async def user_get_statistics(
                         break
 
             if target_account_id is None:
-                return json.dumps({"error": f"User '{username}' not found in the statistics data."})
+                return ErrorResponse(message=f"User '{username}' not found in the statistics data.")
 
         # Process the statistics data
         user_stats: dict[int, dict[str, Any]] = {}
@@ -624,14 +671,12 @@ async def user_get_statistics(
         sorted_users = sorted(user_stats.values(), key=lambda x: x["total_duration"], reverse=True)
 
         # Format the final result
-        result = {
-            "time_period": time_period,
-            "user_filter": username,
-            "total_users": len(sorted_users),
-            "stats_generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "users": sorted_users,
-        }
-
-        return json.dumps(result)
+        return UserStatisticsResponse(
+            time_period=time_period,
+            user_filter=username,
+            total_users=len(sorted_users),
+            stats_generated_at=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            users=sorted_users,
+        )
     except Exception as e:
-        return json.dumps({"error": f"Error getting user statistics: {str(e)}"})
+        return ErrorResponse(message=f"Error getting user statistics: {str(e)}")

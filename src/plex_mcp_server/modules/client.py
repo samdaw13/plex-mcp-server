@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     name="client_list",
     description="List all available Plex clients connected to the server",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def client_list(include_details: bool = True) -> ClientListResponse | ErrorResponse:
     """List all available Plex clients connected to the server.
@@ -71,7 +71,7 @@ async def client_list(include_details: bool = True) -> ClientListResponse | Erro
                 status="success",
                 message="No clients currently connected to your Plex server.",
                 count=0,
-                clients=[]
+                clients=[],
             )
 
         if include_details:
@@ -84,10 +84,10 @@ async def client_list(include_details: bool = True) -> ClientListResponse | Erro
                     version=getattr(client, "version", "Unknown"),
                     platform=getattr(client, "platform", "Unknown"),
                     state=getattr(client, "state", "Unknown"),
-                    machineIdentifier=getattr(client, "machineIdentifier", "Unknown"),
+                    machine_identifier=getattr(client, "machineIdentifier", "Unknown"),
                     address=getattr(client, "_baseurl", "Unknown")
                     or getattr(client, "address", "Unknown"),
-                    protocolCapabilities=getattr(client, "protocolCapabilities", [])
+                    protocol_capabilities=getattr(client, "protocolCapabilities", []),
                 )
                 for client in all_clients
             ]
@@ -98,7 +98,7 @@ async def client_list(include_details: bool = True) -> ClientListResponse | Erro
             status="success",
             message=f"Found {len(all_clients)} connected clients",
             count=len(all_clients),
-            clients=result
+            clients=result,
         )
 
     except Exception as e:
@@ -109,7 +109,7 @@ async def client_list(include_details: bool = True) -> ClientListResponse | Erro
     name="client_get_details",
     description="Get detailed information about a specific Plex client",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def client_get_details(client_name: str) -> ClientDetailsResponse | ErrorResponse:
     """Get detailed information about a specific Plex client.
@@ -190,7 +190,7 @@ async def client_get_details(client_name: str) -> ClientDetailsResponse | ErrorR
     name="client_get_timelines",
     description="Get the current timeline information for a specific Plex client",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def client_get_timelines(client_name: str) -> ClientTimelineResponse | ErrorResponse:
     """Get the current timeline information for a specific Plex client.
@@ -272,14 +272,17 @@ async def client_get_timelines(client_name: str) -> ClientTimelineResponse | Err
                         }
 
                         return ClientTimelineResponse(
-                                status="success",
-                                client_name=client.title,
-                                source="session",
-                                timeline=session_data
+                            status="success",
+                            client_name=client.title,
+                            source="session",
+                            timeline=session_data,
                         )
 
-                return ClientTimelineResponse(status="info", message=f"Client '{client.title}' is not currently playing any media.", client_name=client.title,
-                    )
+                return ClientTimelineResponse(
+                    status="info",
+                    message=f"Client '{client.title}' is not currently playing any media.",
+                    client_name=client.title,
+                )
 
             # Process timeline data
             timeline_data = {
@@ -303,10 +306,10 @@ async def client_get_timelines(client_name: str) -> ClientTimelineResponse | Err
             }
 
             return ClientTimelineResponse(
-                    status="success",
-                    client_name=client.title,
-                    source="timeline",
-                    timeline=timeline_data
+                status="success",
+                client_name=client.title,
+                source="timeline",
+                timeline=timeline_data,
             )
         except Exception:
             # Check if there's an active session for this client
@@ -334,14 +337,17 @@ async def client_get_timelines(client_name: str) -> ClientTimelineResponse | Err
                     }
 
                     return ClientTimelineResponse(
-                            status="success",
-                            client_name=client.title,
-                            source="session",
-                            timeline=session_data
+                        status="success",
+                        client_name=client.title,
+                        source="session",
+                        timeline=session_data,
                     )
 
-            return ClientTimelineResponse(status="warning", message=f"Unable to get timeline information for client '{client.title}'. The client may not be responding to timeline requests.", client_name=client.title,
-                )
+            return ClientTimelineResponse(
+                status="warning",
+                message=f"Unable to get timeline information for client '{client.title}'. The client may not be responding to timeline requests.",
+                client_name=client.title,
+            )
 
     except Exception as e:
         return ErrorResponse(message=f"Error getting client timeline: {str(e)}")
@@ -351,7 +357,7 @@ async def client_get_timelines(client_name: str) -> ClientTimelineResponse | Err
     name="client_get_active",
     description="Get all clients that are currently playing media",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def client_get_active() -> ActiveClientsResponse | ErrorResponse:
     """Get all clients that are currently playing media.
@@ -369,10 +375,10 @@ async def client_get_active() -> ActiveClientsResponse | ErrorResponse:
 
         if not sessions:
             return ActiveClientsResponse(
-                    status="success",
-                    message="No active playback sessions found.",
-                    count=0,
-                    active_clients=[],
+                status="success",
+                message="No active playback sessions found.",
+                count=0,
+                active_clients=[],
             )
 
         active_clients = []
@@ -429,10 +435,10 @@ async def client_get_active() -> ActiveClientsResponse | ErrorResponse:
                 active_clients.append(client_info)
 
         return ActiveClientsResponse(
-                status="success",
-                message=f"Found {len(active_clients)} active clients",
-                count=len(active_clients),
-                active_clients=active_clients
+            status="success",
+            message=f"Found {len(active_clients)} active clients",
+            count=len(active_clients),
+            active_clients=active_clients,
         )
 
     except Exception as e:
@@ -443,7 +449,7 @@ async def client_get_active() -> ActiveClientsResponse | ErrorResponse:
     name="client_start_playback",
     description="Start playback of media on a specified client",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def client_start_playback(
     media_title: str,
@@ -505,10 +511,11 @@ async def client_start_playback(
 
                 media_list.append(media_info)
 
-            return PlaybackResponse(status="multiple_results",
-                    message=f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title.",
-                    count=len(results),
-                    results=media_list,
+            return PlaybackResponse(
+                status="multiple_results",
+                message=f"Multiple items found matching '{media_title}'. Please specify a library or use a more specific title.",
+                count=len(results),
+                results=media_list,
             )
 
         media = results[0]
@@ -519,8 +526,8 @@ async def client_start_playback(
 
             if not clients:
                 return PlaybackResponse(
-                        status="error",
-                        message="No clients are currently connected to your Plex server.",
+                    status="error",
+                    message="No clients are currently connected to your Plex server.",
                 )
 
             client_list = []
@@ -533,9 +540,10 @@ async def client_start_playback(
                     }
                 )
 
-            return PlaybackResponse(status="client_selection",
-                    message="Please specify a client to play on using the client_name parameter",
-                    available_clients=client_list,
+            return PlaybackResponse(
+                status="client_selection",
+                message="Please specify a client to play on using the client_name parameter",
+                available_clients=client_list,
             )
 
         # Try to find the client
@@ -569,22 +577,24 @@ async def client_start_playback(
                     media.playOn(client)
                 else:
                     return PlaybackResponse(
-                            status="error",
-                            message=f"Client '{client.title}' does not support external player",
+                        status="error",
+                        message=f"Client '{client.title}' does not support external player",
                     )
             else:
                 # Normal playback
                 client.playMedia(media, offset=offset)
 
-            return PlaybackResponse(status="success", message=f"Started playback of \'{formatted_title}\' on {client.title}",
-                    media={
-                        "title": title,
-                        "type": media_type,
-                        "formatted_title": formatted_title,
-                        "rating_key": getattr(media, "ratingKey", None),
-                    },
-                    client=client.title,
-                    offset=offset,
+            return PlaybackResponse(
+                status="success",
+                message=f"Started playback of '{formatted_title}' on {client.title}",
+                media={
+                    "title": title,
+                    "type": media_type,
+                    "formatted_title": formatted_title,
+                    "rating_key": getattr(media, "ratingKey", None),
+                },
+                client=client.title,
+                offset=offset,
             )
         except Exception as e:
             return ErrorResponse(message=f"Error starting playback: {str(e)}")
@@ -597,7 +607,7 @@ async def client_start_playback(
     name="client_control_playback",
     description="Control playback on a specified client (play, pause, stop, seek, volume, etc.)",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def client_control_playback(
     client_name: str, action: str, parameter: int | None = None, media_type: str = "video"
@@ -633,7 +643,7 @@ async def client_control_playback(
 
         if action not in valid_actions:
             return ErrorResponse(
-                    message=f"Invalid action '{action}'. Valid actions are: {', '.join(valid_actions)}"
+                message=f"Invalid action '{action}'. Valid actions are: {', '.join(valid_actions)}"
             )
 
         # Check if parameter is needed but not provided
@@ -645,7 +655,7 @@ async def client_control_playback(
         valid_media_types = ["video", "music", "photo"]
         if media_type not in valid_media_types:
             return ErrorResponse(
-                    message=f"Invalid media type '{media_type}'. Valid types are: {', '.join(valid_media_types)}"
+                message=f"Invalid media type '{media_type}'. Valid types are: {', '.join(valid_media_types)}"
             )
 
         # Try to find the client
@@ -662,7 +672,7 @@ async def client_control_playback(
         # Check if the client has playback control capability
         if "playback" not in client.protocolCapabilities:
             return ErrorResponse(
-                    message=f"Client '{client.title}' does not support playback control."
+                message=f"Client '{client.title}' does not support playback control."
             )
 
         # Perform the requested action
@@ -730,11 +740,13 @@ async def client_control_playback(
             except Exception:
                 timeline_data = None
 
-            return SuccessResponse(status="success", message=f"Successfully performed action '{action}' on client '{client.title}'",
-                    action=action,
-                    client=client.title,
-                    parameter=parameter,
-                    timeline=timeline_data,
+            return SuccessResponse(
+                status="success",
+                message=f"Successfully performed action '{action}' on client '{client.title}'",
+                action=action,
+                client=client.title,
+                parameter=parameter,
+                timeline=timeline_data,
             )
 
         except Exception as e:
@@ -748,7 +760,7 @@ async def client_control_playback(
     name="client_navigate",
     description="Navigate a Plex client interface (arrows, select, back, home, etc.)",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def client_navigate(client_name: str, action: str) -> SuccessResponse | ErrorResponse:
     """Navigate a Plex client interface.
@@ -775,7 +787,7 @@ async def client_navigate(client_name: str, action: str) -> SuccessResponse | Er
 
         if action not in valid_actions:
             return ErrorResponse(
-                    message=f"Invalid navigation action '{action}'. Valid actions are: {', '.join(valid_actions)}"
+                message=f"Invalid navigation action '{action}'. Valid actions are: {', '.join(valid_actions)}"
             )
 
         # Try to find the client
@@ -792,7 +804,7 @@ async def client_navigate(client_name: str, action: str) -> SuccessResponse | Er
         # Check if the client has navigation capability
         if "navigation" not in client.protocolCapabilities:
             return ErrorResponse(
-                    message=f"Client '{client.title}' does not support navigation control."
+                message=f"Client '{client.title}' does not support navigation control."
             )
 
         # Perform the requested action
@@ -814,9 +826,11 @@ async def client_navigate(client_name: str, action: str) -> SuccessResponse | Er
             elif action == "contextMenu":
                 client.contextMenu()
 
-            return SuccessResponse(status="success", message=f"Successfully performed navigation action '{action}' on client '{client.title}'",
-                    action=action,
-                    client=client.title,
+            return SuccessResponse(
+                status="success",
+                message=f"Successfully performed navigation action '{action}' on client '{client.title}'",
+                action=action,
+                client=client.title,
             )
 
         except Exception as e:
@@ -830,7 +844,7 @@ async def client_navigate(client_name: str, action: str) -> SuccessResponse | Er
     name="client_set_streams",
     description="Set audio, subtitle, or video streams for current playback on a client",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def client_set_streams(
     client_name: str,
@@ -852,8 +866,8 @@ async def client_set_streams(
         # Check if at least one stream ID is provided
         if audio_stream_id is None and subtitle_stream_id is None and video_stream_id is None:
             return SuccessResponse(
-                    status="error",
-                    message="At least one stream ID (audio, subtitle, or video) must be provided.",
+                status="error",
+                message="At least one stream ID (audio, subtitle, or video) must be provided.",
             )
 
         # Try to find the client
@@ -891,11 +905,11 @@ async def client_set_streams(
 
                 if not client_session:
                     return ErrorResponse(
-                            message=f"Client '{client.title}' is not currently playing any media."
+                        message=f"Client '{client.title}' is not currently playing any media."
                     )
         except Exception:
             return ErrorResponse(
-                    message=f"Unable to get playback status for client '{client.title}'."
+                message=f"Unable to get playback status for client '{client.title}'."
             )
 
         # Set streams
@@ -913,15 +927,17 @@ async def client_set_streams(
                 client.setVideoStream(video_stream_id)
                 changed_streams.append(f"video to {video_stream_id}")
 
-            return SuccessResponse(status="success", message=f"Successfully set streams for '{client.title}': {', '.join(changed_streams)}",
-                    client=client.title,
-                    changes={
-                        "audio_stream": audio_stream_id if audio_stream_id is not None else None,
-                        "subtitle_stream": subtitle_stream_id
-                        if subtitle_stream_id is not None
-                        else None,
-                        "video_stream": video_stream_id if video_stream_id is not None else None,
-                    },
+            return SuccessResponse(
+                status="success",
+                message=f"Successfully set streams for '{client.title}': {', '.join(changed_streams)}",
+                client=client.title,
+                changes={
+                    "audio_stream": audio_stream_id if audio_stream_id is not None else None,
+                    "subtitle_stream": subtitle_stream_id
+                    if subtitle_stream_id is not None
+                    else None,
+                    "video_stream": video_stream_id if video_stream_id is not None else None,
+                },
             )
         except Exception as e:
             return ErrorResponse(message=f"Error setting streams: {str(e)}")

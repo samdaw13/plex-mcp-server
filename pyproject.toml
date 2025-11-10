@@ -132,6 +132,9 @@ warn_unreachable = true
 strict_equality = true
 strict_concatenate = true
 
+# Disable misc errors (used for Pydantic BaseModel subclassing)
+disable_error_code = ["misc"]
+
 # Configuring error messages
 show_error_codes = true
 show_column_numbers = true

@@ -1,13 +1,27 @@
 import contextlib
-import json
 from typing import Any
 
+from mcp.types import ToolAnnotations
+
+from ..types.enums import ToolTag
+from ..types.models import (
+    ErrorResponse,
+    HistoryEntry,
+    MediaPlaybackHistoryResponse,
+    SessionInfo,
+    SessionsActiveResponse,
+)
 from . import connect_to_plex, mcp
 
 
 # Functions for sessions and playback
-@mcp.tool()
-async def sessions_get_active(unused: str | None = None) -> str:
+@mcp.tool(
+    name="sessions_get_active",
+    description="Get information about current playback sessions, including IP addresses",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def sessions_get_active(unused: str | None = None) -> SessionsActiveResponse | ErrorResponse:
     """Get information about current playback sessions, including IP addresses.
 
     Args:
@@ -20,16 +34,14 @@ async def sessions_get_active(unused: str | None = None) -> str:
         sessions = plex.sessions()
 
         if not sessions:
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": "No active sessions found.",
-                    "sessions_count": 0,
-                    "sessions": [],
-                }
+            return SessionsActiveResponse(
+                status="success",
+                message="No active sessions found.",
+                sessions_count=0,
+                sessions=[],
             )
 
-        sessions_data = []
+        sessions_data: list[dict[str, Any] | SessionInfo] = []
         transcode_count = 0
         direct_play_count = 0
         total_bitrate = 0
@@ -175,30 +187,30 @@ async def sessions_get_active(unused: str | None = None) -> str:
 
             sessions_data.append(session_info)
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Found {len(sessions)} active sessions",
-                "sessions_count": len(sessions),
-                "transcode_count": transcode_count,
-                "direct_play_count": direct_play_count,
-                "total_bitrate_kbps": total_bitrate,
-                "sessions": sessions_data,
-            },
-            indent=2,
+        return SessionsActiveResponse(
+            status="success",
+            message=f"Found {len(sessions)} active sessions",
+            sessions_count=len(sessions),
+            transcode_count=transcode_count,
+            direct_play_count=direct_play_count,
+            total_bitrate_kbps=total_bitrate,
+            sessions=sessions_data,
         )
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error getting active sessions: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error getting active sessions: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="sessions_get_media_playback_history",
+    description="Get playback history for a specific media item",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def sessions_get_media_playback_history(
     media_title: str | None = None,
     library_name: str | None = None,
     media_id: int | None = None,
-) -> str:
+) -> MediaPlaybackHistoryResponse | ErrorResponse:
     """Get playback history for a specific media item.
 
     Args:
@@ -211,9 +223,7 @@ async def sessions_get_media_playback_history(
 
         # Check if we have at least one identifier
         if not media_title and not media_id:
-            return json.dumps(
-                {"status": "error", "message": "Either media_title or media_id must be provided."}
-            )
+            return ErrorResponse(message="Either media_title or media_id must be provided.")
 
         media: Any | None = None
         results: list[Any] = []
@@ -224,12 +234,7 @@ async def sessions_get_media_playback_history(
                 # fetchItem takes a rating key and returns the media object
                 media = plex.fetchItem(media_id)
             except Exception as e:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": f"Media with ID '{media_id}' not found: {str(e)}",
-                    }
-                )
+                return ErrorResponse(message=f"Media with ID '{media_id}' not found: {str(e)}")
         # Otherwise search by title
         elif media_title:
             if library_name:
@@ -237,16 +242,12 @@ async def sessions_get_media_playback_history(
                     library = plex.library.section(library_name)
                     results = library.search(title=media_title)
                 except Exception:
-                    return json.dumps(
-                        {"status": "error", "message": f"Library '{library_name}' not found."}
-                    )
+                    return ErrorResponse(message=f"Library '{library_name}' not found.")
             else:
                 results = plex.search(media_title)
 
             if not results:
-                return json.dumps(
-                    {"status": "error", "message": f"No media found matching '{media_title}'."}
-                )
+                return ErrorResponse(message=f"No media found matching '{media_title}'.")
 
             # If we have multiple results, provide details about each match
             if len(results) > 1:
@@ -277,20 +278,18 @@ async def sessions_get_media_playback_history(
 
                     matches.append(item_info)
 
-                return json.dumps(
-                    {
-                        "status": "multiple_matches",
-                        "message": f"Multiple items found with title '{media_title}'. Please specify a library, use a more specific title, or use one of the media_id values below.",
-                        "matches": matches,
-                    },
-                    indent=2,
+                return MediaPlaybackHistoryResponse(
+                    status="multiple_matches",
+                    message=f"Multiple items found with title '{media_title}'. Please specify a library, use a more specific title, or use one of the media_id values below.",
+                    play_count=0,
+                    matches=matches,
                 )
 
             media = results[0]
 
         # Check if media was found
         if media is None:
-            return json.dumps({"status": "error", "message": "Media not found."})
+            return ErrorResponse(message="Media not found.")
 
         media_type = getattr(media, "type", "unknown")
 
@@ -328,17 +327,15 @@ async def sessions_get_media_playback_history(
             history_items = history_method()
 
             if not history_items:
-                return json.dumps(
-                    {
-                        "status": "success",
-                        "message": f"No playback history found for '{formatted_title}'.",
-                        "media": media_info,
-                        "play_count": 0,
-                        "history": [],
-                    }
+                return MediaPlaybackHistoryResponse(
+                    status="success",
+                    message=f"No playback history found for '{formatted_title}'.",
+                    media=media_info,
+                    play_count=0,
+                    history=[],
                 )
 
-            history_data = []
+            history_data: list[dict[str, str] | HistoryEntry] = []
 
             for item in history_items:
                 history_entry = {}
@@ -389,14 +386,11 @@ async def sessions_get_media_playback_history(
                 history_entry["device"] = device_name
                 history_data.append(history_entry)
 
-            return json.dumps(
-                {
-                    "status": "success",
-                    "media": media_info,
-                    "play_count": len(history_items),
-                    "history": history_data,
-                },
-                indent=2,
+            return MediaPlaybackHistoryResponse(
+                status="success",
+                media=media_info,
+                play_count=len(history_items),
+                history=history_data,
             )
 
         except AttributeError:
@@ -406,37 +400,34 @@ async def sessions_get_media_playback_history(
             last_viewed_at = getattr(media, "lastViewedAt", None)
 
             if view_count == 0:
-                return json.dumps(
-                    {
-                        "status": "success",
-                        "message": f"No one has watched '{formatted_title}' yet.",
-                        "media": media_info,
-                        "play_count": 0,
-                    }
+                return MediaPlaybackHistoryResponse(
+                    status="success",
+                    message=f"No one has watched '{formatted_title}' yet.",
+                    media=media_info,
+                    play_count=0,
                 )
 
-            result = {
-                "status": "success",
-                "media": media_info,
-                "play_count": view_count,
-            }
-
+            last_viewed_str = None
             if last_viewed_at:
                 last_viewed_str = (
                     last_viewed_at.strftime("%Y-%m-%d %H:%M")
                     if hasattr(last_viewed_at, "strftime")
                     else str(last_viewed_at)
                 )
-                result["last_viewed"] = last_viewed_str
 
+            viewed_by = None
             # Add any additional account info if available
             account_info = getattr(media, "viewedBy", [])
             if account_info:
-                result["viewed_by"] = [account.title for account in account_info]
+                viewed_by = [account.title for account in account_info]
 
-            return json.dumps(result, indent=2)
+            return MediaPlaybackHistoryResponse(
+                status="success",
+                media=media_info,
+                play_count=view_count,
+                last_viewed=last_viewed_str,
+                viewed_by=viewed_by,
+            )
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error getting media playback history: {str(e)}"}
-        )
+        return ErrorResponse(message=f"Error getting media playback history: {str(e)}")

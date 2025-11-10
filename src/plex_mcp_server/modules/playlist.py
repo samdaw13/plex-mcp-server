@@ -1,10 +1,26 @@
-import json
 import os
 from typing import TYPE_CHECKING, Any
 
 import requests
+from mcp.types import ToolAnnotations
 from plexapi.exceptions import NotFound
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    ErrorResponse,
+    MediaDetailsListResponse,
+    PlaylistAddResponse,
+    PlaylistContentsResponse,
+    PlaylistCopyResponse,
+    PlaylistCreateResponse,
+    PlaylistDeleteResponse,
+    PlaylistEditResponse,
+    PlaylistInfo,
+    PlaylistItemInfo,
+    PlaylistListResponse,
+    PlaylistRemoveResponse,
+    PlaylistUploadPosterResponse,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
@@ -13,8 +29,15 @@ if TYPE_CHECKING:
 
 
 # Functions for playlists and collections
-@mcp.tool()
-async def playlist_list(library_name: str | None = None, content_type: str | None = None) -> str:
+@mcp.tool(
+    name="playlist_list",
+    description="List all playlists on the Plex server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def playlist_list(
+    library_name: str | None = None, content_type: str | None = None
+) -> PlaylistListResponse | ErrorResponse:
     """List all playlists on the Plex server.
 
     Args:
@@ -29,9 +52,8 @@ async def playlist_list(library_name: str | None = None, content_type: str | Non
         if content_type:
             valid_types = ["audio", "video", "photo"]
             if content_type.lower() not in valid_types:
-                return json.dumps(
-                    {"error": f"Invalid content type. Valid types are: {', '.join(valid_types)}"},
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Invalid content type. Valid types are: {', '.join(valid_types)}"
                 )
             playlists = [
                 plex_playlist
@@ -53,22 +75,26 @@ async def playlist_list(library_name: str | None = None, content_type: str | Non
                 else:
                     playlists = library.playlists()
             except NotFound:
-                return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                return ErrorResponse(message=f"Library '{library_name}' not found")
 
         # Format playlist data (lightweight version - no items)
-        playlist_data = []
+        playlist_data: list[dict[str, str | int | None] | PlaylistInfo] = []
         for playlist in playlists:
             try:
                 playlist_data.append(
                     {
-                        "title": playlist.title,
-                        "key": playlist.key,
-                        "ratingKey": playlist.ratingKey,
-                        "type": playlist.playlistType,
-                        "summary": playlist.summary if hasattr(playlist, "summary") else "",
-                        "duration": playlist.duration if hasattr(playlist, "duration") else None,
-                        "item_count": playlist.leafCount
-                        if hasattr(playlist, "leafCount")
+                        "title": str(playlist.title),
+                        "key": str(playlist.key),
+                        "ratingKey": int(playlist.ratingKey)
+                        if hasattr(playlist, "ratingKey")
+                        else None,
+                        "type": str(playlist.playlistType),
+                        "summary": str(playlist.summary) if hasattr(playlist, "summary") else "",
+                        "duration": int(playlist.duration)
+                        if hasattr(playlist, "duration") and playlist.duration is not None
+                        else None,
+                        "item_count": int(playlist.leafCount)
+                        if hasattr(playlist, "leafCount") and playlist.leafCount is not None
                         else None,
                     }
                 )
@@ -82,18 +108,23 @@ async def playlist_list(library_name: str | None = None, content_type: str | Non
                     }
                 )
 
-        return json.dumps(playlist_data, indent=4)
+        return PlaylistListResponse(items=playlist_data)
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_create",
+    description="Create a new playlist with specified items",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False),
+)
 async def playlist_create(
     playlist_title: str,
     item_titles: list[str],
     library_name: str | None = None,
     summary: str | None = None,
-) -> str:
+) -> PlaylistCreateResponse | ErrorResponse:
     """Create a new playlist with specified items.
 
     Args:
@@ -119,42 +150,39 @@ async def playlist_create(
                 found = True
 
             if not found:
-                return json.dumps(
-                    {"status": "error", "message": f"Item '{title}' not found"}, indent=4
-                )
+                return ErrorResponse(message=f"Item '{title}' not found")
 
         if not items:
-            return json.dumps(
-                {"status": "error", "message": "No items found for the playlist"}, indent=4
-            )
+            return ErrorResponse(message="No items found for the playlist")
 
         # Create the playlist
         playlist = plex.createPlaylist(title=playlist_title, items=items, summary=summary)
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Playlist '{playlist_title}' created successfully",
-                "data": {
-                    "title": playlist.title,
-                    "key": playlist.key,
-                    "ratingKey": playlist.ratingKey,
-                    "item_count": len(items),
-                },
+        return PlaylistCreateResponse(
+            message=f"Playlist '{playlist_title}' created successfully",
+            data={
+                "title": str(playlist.title),
+                "key": str(playlist.key),
+                "ratingKey": int(playlist.ratingKey),
+                "item_count": int(len(items)),
             },
-            indent=4,
         )
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_edit",
+    description="Edit a playlist's details such as title and summary",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
 async def playlist_edit(
     playlist_title: str | None = None,
     playlist_id: int | None = None,
     new_title: str | None = None,
     new_summary: str | None = None,
-) -> str:
+) -> PlaylistEditResponse | MediaDetailsListResponse | ErrorResponse:
     """Edit a playlist's details such as title and summary.
 
     Args:
@@ -168,9 +196,7 @@ async def playlist_edit(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         # Find the playlist
         playlist: Playlist | None = None
@@ -192,17 +218,15 @@ async def playlist_edit(
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
                 original_title = playlist.title
             except Exception as e:
-                return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -212,9 +236,7 @@ async def playlist_edit(
             ]
 
             if not matching_playlists:
-                return json.dumps(
-                    {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -232,7 +254,7 @@ async def playlist_edit(
                     )
 
                 # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return MediaDetailsListResponse(items=matches)
 
             playlist = matching_playlists[0]
             original_title = playlist.title
@@ -253,29 +275,31 @@ async def playlist_edit(
                 changes.append("summary")
 
         if not changes:
-            return json.dumps(
-                {
-                    "updated": False,
-                    "title": playlist.title,
-                    "message": "No changes made to the playlist",
-                },
-                indent=4,
+            return PlaylistEditResponse(
+                updated=False,
+                title=playlist.title,
+                message="No changes made to the playlist",
             )
 
-        return json.dumps(
-            {"updated": True, "title": new_title or playlist.title, "changes": changes}, indent=4
+        return PlaylistEditResponse(
+            updated=True, title=new_title or playlist.title, changes=changes
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_upload_poster",
+    description="Upload a poster image for a playlist",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
 async def playlist_upload_poster(
     playlist_title: str | None = None,
     playlist_id: int | None = None,
     poster_url: str | None = None,
     poster_filepath: str | None = None,
-) -> str:
+) -> PlaylistUploadPosterResponse | MediaDetailsListResponse | ErrorResponse:
     """Upload a poster image for a playlist.
 
     Args:
@@ -289,15 +313,11 @@ async def playlist_upload_poster(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         # Check that at least one poster source is provided
         if not poster_url and not poster_filepath:
-            return json.dumps(
-                {"error": "Either poster_url or poster_filepath must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either poster_url or poster_filepath must be provided")
 
         # Find the playlist
         playlist = None
@@ -318,16 +338,14 @@ async def playlist_upload_poster(
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -335,9 +353,7 @@ async def playlist_upload_poster(
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
-                return json.dumps(
-                    {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -355,61 +371,59 @@ async def playlist_upload_poster(
                     )
 
                 # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return MediaDetailsListResponse(items=matches)
 
             playlist = matching_playlists[0]
 
         # Upload from URL
         if poster_url:
             try:
-                response = requests.get(poster_url)
+                response = requests.get(poster_url, timeout=10)
                 if response.status_code != 200:
-                    return json.dumps(
-                        {"error": f"Failed to download image from URL: {response.status_code}"},
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Failed to download image from URL: {response.status_code}"
                     )
 
                 # Upload the poster
                 playlist.uploadPoster(url=poster_url)
-                return json.dumps(
-                    {"updated": True, "poster_source": "url", "title": playlist.title}, indent=4
+                return PlaylistUploadPosterResponse(
+                    updated=True, poster_source="url", title=playlist.title
                 )
             except Exception as url_error:
-                return json.dumps(
-                    {"error": f"Error uploading from URL: {str(url_error)}"}, indent=4
-                )
+                return ErrorResponse(message=f"Error uploading from URL: {str(url_error)}")
 
         # Upload from file
         if poster_filepath:
             if not os.path.exists(poster_filepath):
-                return json.dumps({"error": f"File not found: {poster_filepath}"}, indent=4)
+                return ErrorResponse(message=f"File not found: {poster_filepath}")
 
             try:
                 # Upload the poster
                 playlist.uploadPoster(filepath=poster_filepath)
-                return json.dumps(
-                    {"updated": True, "poster_source": "file", "title": playlist.title}, indent=4
+                return PlaylistUploadPosterResponse(
+                    updated=True, poster_source="file", title=playlist.title
                 )
             except Exception as file_error:
-                return json.dumps(
-                    {"error": f"Error uploading from file: {str(file_error)}"}, indent=4
-                )
+                return ErrorResponse(message=f"Error uploading from file: {str(file_error)}")
 
         # This should never be reached due to validation above, but mypy requires it
-        return json.dumps(
-            {"error": "Neither poster_url nor poster_filepath was provided"}, indent=4
-        )
+        return ErrorResponse(message="Neither poster_url nor poster_filepath was provided")
 
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_copy_to_user",
+    description="Copy a playlist to another user account",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False),
+)
 async def playlist_copy_to_user(
     playlist_title: str | None = None,
     playlist_id: int | None = None,
     username: str | None = None,
-) -> str:
+) -> PlaylistCopyResponse | ErrorResponse:
     """Copy a playlist to another user account.
 
     Args:
@@ -422,16 +436,10 @@ async def playlist_copy_to_user(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "Either playlist_id or playlist_title must be provided",
-                },
-                indent=4,
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         if not username:
-            return json.dumps({"status": "error", "message": "Username must be provided"}, indent=4)
+            return ErrorResponse(message="Username must be provided")
 
         # Find the playlist
         playlist = None
@@ -452,23 +460,14 @@ async def playlist_copy_to_user(
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Playlist with ID '{playlist_id}' not found",
-                        },
-                        indent=4,
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
             except Exception as e:
-                return json.dumps(
-                    {"status": "error", "message": f"Error fetching playlist by ID: {str(e)}"},
-                    indent=4,
-                )
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -476,13 +475,7 @@ async def playlist_copy_to_user(
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": f"No playlist found with title '{playlist_title}'",
-                    },
-                    indent=4,
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -499,13 +492,10 @@ async def playlist_copy_to_user(
                         }
                     )
 
-                return json.dumps(
-                    {
-                        "status": "multiple_matches",
-                        "message": f"Found {len(matching_playlists)} playlists with title '{playlist_title}'. Please specify the playlist ID.",
-                        "matches": matches,
-                    },
-                    indent=4,
+                return PlaylistCopyResponse(
+                    status="multiple_matches",
+                    message=f"Found {len(matching_playlists)} playlists with title '{playlist_title}'. Please specify the playlist ID.",
+                    matches=matches,
                 )
 
             playlist = matching_playlists[0]
@@ -515,31 +505,31 @@ async def playlist_copy_to_user(
         user = next((u for u in users if u.title.lower() == username.lower()), None)
 
         if not user:
-            return json.dumps(
-                {"status": "error", "message": f"User '{username}' not found"}, indent=4
-            )
+            return ErrorResponse(message=f"User '{username}' not found")
 
         # Copy the playlist
         playlist.copyToUser(user=user)
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Playlist '{playlist.title}' copied to user '{username}'",
-            },
-            indent=4,
+        return PlaylistCopyResponse(
+            status="success",
+            message=f"Playlist '{playlist.title}' copied to user '{username}'",
         )
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_add_to",
+    description="Add items to a playlist",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False),
+)
 async def playlist_add_to(
     playlist_title: str | None = None,
     playlist_id: int | None = None,
     item_titles: list[str] | None = None,
     item_ids: list[int] | None = None,
-) -> str:
+) -> PlaylistAddResponse | MediaDetailsListResponse | ErrorResponse:
     """Add items to a playlist.
 
     Args:
@@ -553,15 +543,11 @@ async def playlist_add_to(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         # Validate that at least one item source is provided
         if (not item_titles or len(item_titles) == 0) and (not item_ids or len(item_ids) == 0):
-            return json.dumps(
-                {"error": "Either item_titles or item_ids must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either item_titles or item_ids must be provided")
 
         # Find the playlist
         playlist = None
@@ -582,16 +568,14 @@ async def playlist_add_to(
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -599,9 +583,7 @@ async def playlist_add_to(
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
-                return json.dumps(
-                    {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -619,7 +601,7 @@ async def playlist_add_to(
                     )
 
                 # Return as a direct array like playlist_list
-                return json.dumps({"Multiple Matches": matches}, indent=4)
+                return PlaylistAddResponse(items={"Multiple Matches": matches})
 
             playlist = matching_playlists[0]
 
@@ -697,36 +679,38 @@ async def playlist_add_to(
                             if match not in possible_matches_response:
                                 possible_matches_response.append(match)
 
-                return json.dumps(
-                    {"Multiple Possible Matches Use ID": possible_matches_response}, indent=4
+                return PlaylistAddResponse(
+                    items={"Multiple Possible Matches Use ID": possible_matches_response}
                 )
 
-            return json.dumps({"error": "No matching items found to add to the playlist"}, indent=4)
+            return ErrorResponse(message="No matching items found to add to the playlist")
 
         # Add items to the playlist
         for item in items_to_add:
             playlist.addItems(item)
 
-        return json.dumps(
-            {
-                "added": True,
-                "title": playlist.title,
-                "items_added": [item.title for item in items_to_add],
-                "items_not_found": not_found,
-                "total_items": len(playlist.items()),
-            },
-            indent=4,
+        return PlaylistAddResponse(
+            added=True,
+            title=playlist.title,
+            items_added=[item.title for item in items_to_add],
+            items_not_found=not_found,
+            total_items=len(playlist.items()),
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_remove_from",
+    description="Remove items from a playlist",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=False),
+)
 async def playlist_remove_from(
     playlist_title: str | None = None,
     playlist_id: int | None = None,
     item_titles: list[str] | None = None,
-) -> str:
+) -> PlaylistRemoveResponse | MediaDetailsListResponse | ErrorResponse:
     """Remove items from a playlist.
 
     Args:
@@ -739,14 +723,10 @@ async def playlist_remove_from(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         if not item_titles or len(item_titles) == 0:
-            return json.dumps(
-                {"error": "At least one item title must be provided to remove"}, indent=4
-            )
+            return ErrorResponse(message="At least one item title must be provided to remove")
 
         # Find the playlist
         playlist = None
@@ -767,16 +747,14 @@ async def playlist_remove_from(
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -784,9 +762,7 @@ async def playlist_remove_from(
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
-                return json.dumps(
-                    {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -804,7 +780,7 @@ async def playlist_remove_from(
                     )
 
                 # Return as a direct array like playlist_list
-                return json.dumps({"Multiple Matches": matches}, indent=4)
+                return PlaylistRemoveResponse(items={"Multiple Matches": matches})
 
             playlist = matching_playlists[0]
 
@@ -831,36 +807,32 @@ async def playlist_remove_from(
             for item in playlist_items:
                 current_items.append({"title": item.title, "type": item.type, "id": item.ratingKey})
 
-            return json.dumps(
-                {
-                    "error": "No matching items found in the playlist to remove",
-                    "playlist_title": playlist.title,
-                    "playlist_id": playlist.ratingKey,
-                    "current_items": current_items,
-                },
-                indent=4,
-            )
+            return ErrorResponse(message="No matching items found in the playlist to remove")
 
         # Remove items from the playlist
         # Using removeItems (plural) since removeItem is deprecated
         playlist.removeItems(items_to_remove)
 
-        return json.dumps(
-            {
-                "removed": True,
-                "title": playlist.title,
-                "items_removed": [item.title for item in items_to_remove],
-                "items_not_found": not_found,
-                "remaining_items": len(playlist.items()),
-            },
-            indent=4,
+        return PlaylistRemoveResponse(
+            removed=True,
+            title=playlist.title,
+            items_removed=[item.title for item in items_to_remove],
+            items_not_found=not_found,
+            remaining_items=len(playlist.items()),
         )
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
-async def playlist_delete(playlist_title: str | None = None, playlist_id: int | None = None) -> str:
+@mcp.tool(
+    name="playlist_delete",
+    description="Delete a playlist",
+    tags={ToolTag.DELETE.value},
+    annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True),
+)
+async def playlist_delete(
+    playlist_title: str | None = None, playlist_id: int | None = None
+) -> PlaylistDeleteResponse | MediaDetailsListResponse | ErrorResponse:
     """Delete a playlist.
 
     Args:
@@ -872,9 +844,7 @@ async def playlist_delete(playlist_title: str | None = None, playlist_id: int | 
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         # Find the playlist
         playlist = None
@@ -895,16 +865,14 @@ async def playlist_delete(playlist_title: str | None = None, playlist_id: int | 
                     playlist = next((p for p in all_playlists if p.ratingKey == playlist_id), None)
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
         else:
             # Search by title
             if not playlist_title:
-                return json.dumps(
-                    {"error": "playlist_title cannot be empty when searching by title"}, indent=4
+                return ErrorResponse(
+                    message="playlist_title cannot be empty when searching by title"
                 )
             playlists = [
                 plex_playlist for plex_playlist in plex.playlists() if plex_playlist is not None
@@ -912,9 +880,7 @@ async def playlist_delete(playlist_title: str | None = None, playlist_id: int | 
             matching_playlists = [p for p in playlists if p.title.lower() == playlist_title.lower()]
 
             if not matching_playlists:
-                return json.dumps(
-                    {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-                )
+                return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
             # If multiple matching playlists, return list of matches with IDs
             if len(matching_playlists) > 1:
@@ -932,7 +898,7 @@ async def playlist_delete(playlist_title: str | None = None, playlist_id: int | 
                     )
 
                 # Return as a direct array like playlist_list
-                return json.dumps(matches, indent=4)
+                return MediaDetailsListResponse(items=matches)
 
             playlist = matching_playlists[0]
 
@@ -943,16 +909,21 @@ async def playlist_delete(playlist_title: str | None = None, playlist_id: int | 
         playlist.delete()
 
         # Return a simple object with the result
-        return json.dumps({"deleted": True, "title": playlist_title_to_return}, indent=4)
+        return PlaylistDeleteResponse(deleted=True, title=playlist_title_to_return)
 
     except Exception as e:
-        return json.dumps({"error": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
+@mcp.tool(
+    name="playlist_get_contents",
+    description="Get the contents of a playlist",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def playlist_get_contents(
     playlist_title: str | None = None, playlist_id: int | None = None
-) -> str:
+) -> PlaylistContentsResponse | MediaDetailsListResponse | ErrorResponse:
     """Get the contents of a playlist.
 
     Args:
@@ -967,9 +938,7 @@ async def playlist_get_contents(
 
         # Validate that at least one identifier is provided
         if not playlist_id and not playlist_title:
-            return json.dumps(
-                {"error": "Either playlist_id or playlist_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either playlist_id or playlist_title must be provided")
 
         # If playlist_id is provided, use it to directly fetch the playlist
         if playlist_id:
@@ -990,20 +959,16 @@ async def playlist_get_contents(
                     )
 
                 if not playlist:
-                    return json.dumps(
-                        {"error": f"Playlist with ID '{playlist_id}' not found"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Playlist with ID '{playlist_id}' not found")
 
                 # Get playlist contents
                 print(playlist)
                 return get_playlist_contents(playlist)
             except Exception as e:
                 if "500" in str(e):
-                    return json.dumps({"error": "Empty playlist"}, indent=4)
+                    return ErrorResponse(message="Empty playlist")
                 else:
-                    return json.dumps(
-                        {"error": f"Error fetching playlist by ID: {str(e)}"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Error fetching playlist by ID: {str(e)}")
 
         # If we get here, we're searching by title
         all_playlists: list[Playlist] = [
@@ -1017,9 +982,7 @@ async def playlist_get_contents(
 
         # If no matching playlists
         if not matching_playlists:
-            return json.dumps(
-                {"error": f"No playlist found with title '{playlist_title}'"}, indent=4
-            )
+            return ErrorResponse(message=f"No playlist found with title '{playlist_title}'")
 
         # If multiple matching playlists, return list of matches with IDs
         if len(matching_playlists) > 1:
@@ -1035,23 +998,21 @@ async def playlist_get_contents(
                 )
 
             # Return as a direct array like playlist_list
-            return json.dumps(matches, indent=4)
+            return MediaDetailsListResponse(items=matches)
 
         # Single match - get contents
         return get_playlist_contents(matching_playlists[0])
 
     except Exception as e:
-        return json.dumps(
-            {"status": "error", "message": f"Error getting playlist contents: {str(e)}"}, indent=4
-        )
+        return ErrorResponse(message=f"Error getting playlist contents: {str(e)}")
 
 
-def get_playlist_contents(playlist: Any) -> str:
+def get_playlist_contents(playlist: Any) -> PlaylistContentsResponse | ErrorResponse:
     """Helper function to get formatted playlist contents."""
     print(playlist)
     try:
         items = playlist.items()
-        playlist_items = []
+        playlist_items: list[dict[str, str | int | None] | PlaylistItemInfo] = []
 
         for item in items:
             item_data = {
@@ -1088,18 +1049,15 @@ def get_playlist_contents(playlist: Any) -> str:
 
             playlist_items.append(item_data)
 
-        playlist_info = {
-            "title": playlist.title,
-            "id": playlist.ratingKey,
-            "key": playlist.key,
-            "type": playlist.playlistType,
-            "summary": playlist.summary if hasattr(playlist, "summary") else None,
-            "duration": playlist.duration if hasattr(playlist, "duration") else None,
-            "itemCount": len(playlist_items),
-            "items": playlist_items,
-        }
-
-        # Return just the playlist info without status wrappers
-        return json.dumps(playlist_info, indent=4)
+        return PlaylistContentsResponse(
+            title=playlist.title,
+            id=playlist.ratingKey,
+            key=playlist.key,
+            type=playlist.playlistType,
+            summary=playlist.summary if hasattr(playlist, "summary") else None,
+            duration=playlist.duration if hasattr(playlist, "duration") else None,
+            item_count=len(playlist_items),
+            items=playlist_items,
+        )
     except Exception as e:
-        return json.dumps({"error": f"Error formatting playlist contents: {str(e)}"}, indent=4)
+        return ErrorResponse(message=f"Error formatting playlist contents: {str(e)}")
