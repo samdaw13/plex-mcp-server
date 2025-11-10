@@ -1,5 +1,7 @@
 """Pydantic models for MCP tool parameters and responses."""
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -328,7 +330,149 @@ class CollectionEditResponse(BaseModel):
 
 
 # ============================================================================
-# LIBRARY, MEDIA, SERVER, SESSIONS, USER, PLAYLIST MODELS
+# LIBRARY MODELS
+# ============================================================================
+
+class LibraryInfo(BaseModel):
+    """Information about a library."""
+    type: str
+    libraryId: str
+    totalSize: int
+    uuid: str
+    locations: list[str]
+    updatedAt: str
+
+
+class LibraryListResponse(BaseModel):
+    """Response from library_list tool."""
+    model_config = {"extra": "allow"}
+    libraries: dict[str, LibraryInfo] | None = None
+    message: str | None = None
+
+
+class MovieStats(BaseModel):
+    """Statistics for movie library."""
+    count: int
+    unwatched: int
+    topGenres: dict[str, int] | None = None
+    topDirectors: dict[str, int] | None = None
+    topStudios: dict[str, int] | None = None
+    byDecade: dict[int, int] | None = None
+
+
+class ShowStats(BaseModel):
+    """Statistics for TV show library."""
+    shows: int
+    seasons: int
+    episodes: int
+    unwatchedShows: int
+    topGenres: dict[str, int] | None = None
+    topStudios: dict[str, int] | None = None
+    byDecade: dict[int, int] | None = None
+
+
+class MusicStats(BaseModel):
+    """Statistics for music library."""
+    count: int
+    totalTracks: int
+    totalAlbums: int
+    totalPlays: int
+    topGenres: dict[str, int] | None = None
+    topArtists: dict[str, int] | None = None
+    topAlbums: dict[str, int] | None = None
+    byYear: dict[int, int] | None = None
+    audioFormats: dict[str, int] | None = None
+
+
+class LibraryStatsResponse(BaseModel):
+    """Response from library_get_stats tool."""
+    model_config = {"extra": "allow"}
+    name: str
+    type: str
+    totalItems: int
+    movieStats: MovieStats | None = None
+    showStats: ShowStats | None = None
+    musicStats: MusicStats | None = None
+
+
+class LibraryRefreshResponse(BaseModel):
+    """Response from library_refresh tool."""
+    model_config = {"extra": "allow"}
+    success: bool
+    message: str
+
+
+class LibraryScanResponse(BaseModel):
+    """Response from library_scan tool."""
+    model_config = {"extra": "allow"}
+    success: bool
+    message: str
+
+
+class LibraryDetailsResponse(BaseModel):
+    """Response from library_get_details tool."""
+    model_config = {"extra": "allow"}
+    name: str
+    type: str
+    uuid: str
+    totalItems: int
+    locations: list[str]
+    agent: str
+    scanner: str
+    language: str
+    scannerSettings: dict[str, str] | None = None
+    agentSettings: dict[str, str] | None = None
+    advancedSettings: dict[str, str] | None = None
+
+
+class RecentlyAddedItem(BaseModel):
+    """A recently added media item."""
+    title: str
+    addedAt: str
+    year: str | None = None
+    showTitle: str | None = None
+    seasonNumber: int | str | None = None
+    episodeNumber: int | str | None = None
+    artist: str | None = None
+    album: str | None = None
+    error: str | None = None
+
+
+class LibraryRecentlyAddedResponse(BaseModel):
+    """Response from library_get_recently_added tool."""
+    model_config = {"extra": "allow"}
+    count: int
+    requestedCount: int
+    library: str
+    items: dict[str, list[dict[str, Any] | RecentlyAddedItem]]
+
+
+class LibraryContentItem(BaseModel):
+    """An item in a library."""
+    title: str
+    year: str | int | None = None
+    duration: dict[str, int] | None = None
+    mediaInfo: dict[str, str] | None = None
+    watched: bool | None = None
+    seasonCount: int | None = None
+    episodeCount: int | None = None
+    albumCount: int | None = None
+    trackCount: int | None = None
+    viewCount: int | None = None
+    skipCount: int | None = None
+
+
+class LibraryContentsResponse(BaseModel):
+    """Response from library_get_contents tool."""
+    model_config = {"extra": "allow"}
+    name: str
+    type: str
+    totalItems: int
+    items: list[LibraryContentItem | dict[str, str | int | bool | dict | None]]
+
+
+# ============================================================================
+# MEDIA, SERVER, SESSIONS, USER, PLAYLIST MODELS
 # ============================================================================
 
 # Generic models that can be reused across modules
