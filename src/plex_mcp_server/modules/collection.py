@@ -3,10 +3,15 @@ from typing import Any
 
 from plexapi.exceptions import NotFound
 
+from ..types.enums import ToolTag
 from . import connect_to_plex, mcp
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_list",
+    description="List all collections on the Plex server or in a specific library",
+    meta={"access": ToolTag.READ.value}
+)
 async def collection_list(library_name: str | None = None) -> str:
     """List all collections on the Plex server or in a specific library.
 
@@ -94,7 +99,11 @@ async def collection_list(library_name: str | None = None) -> str:
         return json.dumps({"error": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_create",
+    description="Create a new collection with specified items",
+    meta={"access": ToolTag.WRITE.value}
+)
 async def collection_create(
     collection_title: str,
     library_name: str,
@@ -226,7 +235,11 @@ async def collection_create(
         return json.dumps({"error": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_add_to",
+    description="Add items to an existing collection",
+    meta={"access": ToolTag.WRITE.value}
+)
 async def collection_add_to(
     collection_title: str | None = None,
     collection_id: int | None = None,
@@ -455,7 +468,11 @@ async def collection_add_to(
         return json.dumps({"error": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_remove_from",
+    description="Remove items from an existing collection",
+    meta={"access": ToolTag.WRITE.value}
+)
 async def collection_remove_from(
     collection_title: str | None = None,
     collection_id: int | None = None,
@@ -613,7 +630,11 @@ async def collection_remove_from(
         return json.dumps({"error": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_delete",
+    description="Delete a collection from the Plex server",
+    meta={"access": ToolTag.DELETE.value}
+)
 async def collection_delete(
     collection_title: str | None = None,
     collection_id: int | None = None,
@@ -725,7 +746,11 @@ async def collection_delete(
         return json.dumps({"error": str(e)}, indent=4)
 
 
-@mcp.tool()
+@mcp.tool(
+    name="collection_edit",
+    description="Edit collection metadata (title, summary, sorting)",
+    meta={"access": ToolTag.WRITE.value}
+)
 async def collection_edit(
     collection_title: str | None = None,
     collection_id: int | None = None,

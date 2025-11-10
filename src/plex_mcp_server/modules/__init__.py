@@ -3,7 +3,7 @@
 import os
 import time
 
-from mcp.server.fastmcp import FastMCP
+from fastmcp import FastMCP
 from plexapi.myplex import MyPlexAccount
 from plexapi.server import PlexServer
 
