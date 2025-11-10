@@ -23,9 +23,11 @@ from . import connect_to_plex, mcp
     name="collection_list",
     description="List all collections on the Plex server or in a specific library",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
-async def collection_list(library_name: str | None = None) -> CollectionListResponse | ErrorResponse:
+async def collection_list(
+    library_name: str | None = None,
+) -> CollectionListResponse | ErrorResponse:
     """List all collections on the Plex server or in a specific library.
 
     Args:
@@ -109,7 +111,7 @@ async def collection_list(library_name: str | None = None) -> CollectionListResp
     name="collection_create",
     description="Create a new collection with specified items",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def collection_create(
     collection_title: str,
@@ -202,14 +204,9 @@ async def collection_create(
             return CollectionCreateResponse(
                 status="error",
                 possible_matches=[
-                    PossibleMatch(
-                        title=m["title"],
-                        id=m["id"],
-                        type=m["type"],
-                        year=m.get("year")
-                    )
+                    PossibleMatch(title=m["title"], id=m["id"], type=m["type"], year=m.get("year"))
                     for m in possible_matches_list
-                ]
+                ],
             )
 
         if not items:
@@ -233,7 +230,7 @@ async def collection_create(
     name="collection_add_to",
     description="Add items to an existing collection",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def collection_add_to(
     collection_title: str | None = None,
@@ -255,7 +252,9 @@ async def collection_add_to(
         plex = connect_to_plex()
 
         if not collection_id and not collection_title:
-            return ErrorResponse(message="Either collection_id or collection_title must be provided")
+            return ErrorResponse(
+                message="Either collection_id or collection_title must be provided"
+            )
 
         if (not item_titles or len(item_titles) == 0) and (not item_ids or len(item_ids) == 0):
             return ErrorResponse(message="Either item_titles or item_ids must be provided")
@@ -288,7 +287,9 @@ async def collection_add_to(
                 return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
             if not library_name:
-                return ErrorResponse(message="Library name is required when adding items by collection title")
+                return ErrorResponse(
+                    message="Library name is required when adding items by collection title"
+                )
 
             try:
                 library = plex.library.section(library_name)
@@ -312,16 +313,13 @@ async def collection_add_to(
                         "title": c.title,
                         "id": c.ratingKey,
                         "library": library_name,
-                        "item_count": c.childCount
-                        if hasattr(c, "childCount")
-                        else len(c.items()),
+                        "item_count": c.childCount if hasattr(c, "childCount") else len(c.items()),
                     }
                     for c in matching_collections
                 ]
 
                 return CollectionAddResponse(
-                    status="multiple_matches",
-                    multiple_collections=matches
+                    status="multiple_matches", multiple_collections=matches
                 )
 
             collection = matching_collections[0]
@@ -406,14 +404,9 @@ async def collection_add_to(
             return CollectionAddResponse(
                 status="error",
                 possible_matches=[
-                    PossibleMatch(
-                        title=m["title"],
-                        id=m["id"],
-                        type=m["type"],
-                        year=m.get("year")
-                    )
+                    PossibleMatch(title=m["title"], id=m["id"], type=m["type"], year=m.get("year"))
                     for m in possible_matches_list
-                ]
+                ],
             )
 
         if not items_to_add and not already_in_collection:
@@ -438,7 +431,7 @@ async def collection_add_to(
     name="collection_remove_from",
     description="Remove items from an existing collection",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=False)
+    annotations=ToolAnnotations(idempotentHint=False),
 )
 async def collection_remove_from(
     collection_title: str | None = None,
@@ -458,7 +451,9 @@ async def collection_remove_from(
         plex = connect_to_plex()
 
         if not collection_id and not collection_title:
-            return ErrorResponse(message="Either collection_id or collection_title must be provided")
+            return ErrorResponse(
+                message="Either collection_id or collection_title must be provided"
+            )
 
         if not item_titles or len(item_titles) == 0:
             return ErrorResponse(message="At least one item title must be provided to remove")
@@ -489,7 +484,9 @@ async def collection_remove_from(
                 return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
             if not library_name:
-                return ErrorResponse(message="Library name is required when removing items by collection title")
+                return ErrorResponse(
+                    message="Library name is required when removing items by collection title"
+                )
 
             try:
                 library = plex.library.section(library_name)
@@ -513,16 +510,13 @@ async def collection_remove_from(
                         "title": c.title,
                         "id": c.ratingKey,
                         "library": library_name,
-                        "item_count": c.childCount
-                        if hasattr(c, "childCount")
-                        else len(c.items()),
+                        "item_count": c.childCount if hasattr(c, "childCount") else len(c.items()),
                     }
                     for c in matching_collections
                 ]
 
                 return CollectionRemoveResponse(
-                    status="multiple_matches",
-                    multiple_collections=matches
+                    status="multiple_matches", multiple_collections=matches
                 )
 
             collection = matching_collections[0]
@@ -571,7 +565,7 @@ async def collection_remove_from(
     name="collection_delete",
     description="Delete a collection from the Plex server",
     tags={ToolTag.DELETE.value},
-    annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True)
+    annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True),
 )
 async def collection_delete(
     collection_title: str | None = None,
@@ -589,7 +583,9 @@ async def collection_delete(
         plex = connect_to_plex()
 
         if not collection_id and not collection_title:
-            return ErrorResponse(message="Either collection_id or collection_title must be provided")
+            return ErrorResponse(
+                message="Either collection_id or collection_title must be provided"
+            )
 
         if collection_id:
             try:
@@ -620,7 +616,9 @@ async def collection_delete(
                 return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
 
         if not library_name:
-            return ErrorResponse(message="Library name is required when deleting by collection title")
+            return ErrorResponse(
+                message="Library name is required when deleting by collection title"
+            )
 
         try:
             library = plex.library.section(library_name)
@@ -649,10 +647,7 @@ async def collection_delete(
                 for c in matching_collections
             ]
 
-            return CollectionDeleteResponse(
-                status="multiple_matches",
-                multiple_collections=matches
-            )
+            return CollectionDeleteResponse(status="multiple_matches", multiple_collections=matches)
 
         collection = matching_collections[0]
         collection_title_to_return = collection.title
@@ -667,7 +662,7 @@ async def collection_delete(
     name="collection_edit",
     description="Edit collection metadata (title, summary, sorting)",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=True)
+    annotations=ToolAnnotations(idempotentHint=True),
 )
 async def collection_edit(
     collection_title: str | None = None,
@@ -709,7 +704,9 @@ async def collection_edit(
         plex = connect_to_plex()
 
         if not collection_id and not collection_title:
-            return ErrorResponse(message="Either collection_id or collection_title must be provided")
+            return ErrorResponse(
+                message="Either collection_id or collection_title must be provided"
+            )
 
         collection = None
 
@@ -737,7 +734,9 @@ async def collection_edit(
                 return ErrorResponse(message=f"Error fetching collection by ID: {str(e)}")
         else:
             if not library_name:
-                return ErrorResponse(message="Library name is required when editing by collection title")
+                return ErrorResponse(
+                    message="Library name is required when editing by collection title"
+                )
 
             try:
                 library = plex.library.section(library_name)
@@ -761,16 +760,13 @@ async def collection_edit(
                         "title": c.title,
                         "id": c.ratingKey,
                         "library": library_name,
-                        "item_count": c.childCount
-                        if hasattr(c, "childCount")
-                        else len(c.items()),
+                        "item_count": c.childCount if hasattr(c, "childCount") else len(c.items()),
                     }
                     for c in matching_collections
                 ]
 
                 return CollectionEditResponse(
-                    status="multiple_matches",
-                    multiple_collections=matches
+                    status="multiple_matches", multiple_collections=matches
                 )
 
             collection = matching_collections[0]
@@ -848,11 +844,14 @@ async def collection_edit(
                     )
 
         if not changes:
-            return CollectionEditResponse(updated=False, message="No changes made to the collection")
+            return CollectionEditResponse(
+                updated=False, message="No changes made to the collection"
+            )
 
         collection_title_to_return = new_title if new_title else collection.title
 
-        return CollectionEditResponse(updated=True, title=collection_title_to_return, changes=changes)
+        return CollectionEditResponse(
+            updated=True, title=collection_title_to_return, changes=changes
+        )
     except Exception as e:
         return ErrorResponse(message=str(e))
-

@@ -1,6 +1,8 @@
 import os
-import signal
+from _asyncio import Task
+from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from typing import Any
 
 from mcp.server import Server
 from mcp.server.sse import SseServerTransport
@@ -10,14 +12,14 @@ from starlette.types import Receive, Scope, Send
 
 from .modules import mcp
 
-active_connections: set = set()
+active_connections: set[Task[None]] = set[Task[None]]()
 
 
 @asynccontextmanager
-async def lifespan(app: Starlette):
+async def lifespan(app: Starlette) -> AsyncGenerator[None, Any]:
     """Handle application lifespan events."""
-    yield
-    for task in list(active_connections):
+    yield None
+    for task in list[Task[None]](active_connections):
         task.cancel()
     active_connections.clear()
 
@@ -34,6 +36,7 @@ def create_starlette_app(mcp_server: Server, *, debug: bool = False) -> Starlett
             try:
                 async with sse.connect_sse(scope, receive, send) as (read_stream, write_stream):
                     import asyncio
+
                     task = asyncio.current_task()
                     if task:
                         active_connections.add(task)

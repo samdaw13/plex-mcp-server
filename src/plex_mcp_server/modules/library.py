@@ -11,6 +11,7 @@ from plexapi.server import PlexServer
 from ..types.enums import ToolTag
 from ..types.models import (
     ErrorResponse,
+    LibraryContentItem,
     LibraryContentsResponse,
     LibraryDetailsResponse,
     LibraryInfo,
@@ -21,6 +22,7 @@ from ..types.models import (
     LibraryStatsResponse,
     MovieStats,
     MusicStats,
+    RecentlyAddedItem,
     ShowStats,
 )
 from . import connect_to_plex, mcp
@@ -46,7 +48,7 @@ async def async_get_json(
     name="library_list",
     description="List all available libraries on the Plex server",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def library_list() -> LibraryListResponse | ErrorResponse:
     """List all available libraries on the Plex server."""
@@ -62,11 +64,11 @@ async def library_list() -> LibraryListResponse | ErrorResponse:
         for lib in libraries:
             libraries_dict[lib.title] = LibraryInfo(
                 type=lib.type,
-                libraryId=str(lib.key),
-                totalSize=lib.totalSize,
+                library_id=str(lib.key),
+                total_size=lib.totalSize,
                 uuid=lib.uuid,
                 locations=lib.locations,
-                updatedAt=lib.updatedAt.isoformat(),
+                updated_at=lib.updatedAt.isoformat(),
             )
 
         return LibraryListResponse(libraries=libraries_dict)
@@ -78,7 +80,7 @@ async def library_list() -> LibraryListResponse | ErrorResponse:
     name="library_get_stats",
     description="Get statistics for a specific library",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorResponse:
     """Get statistics for a specific library.
@@ -146,17 +148,25 @@ async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorRe
                 movie_stats = MovieStats(
                     count=all_data.get("size", 0),
                     unwatched=unwatched_data.get("size", 0),
-                    topGenres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5]) if genres else None,
-                    topDirectors=dict(sorted(directors.items(), key=lambda x: x[1], reverse=True)[:5]) if directors else None,
-                    topStudios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5]) if studios else None,
-                    byDecade=dict(sorted(decades.items())) if decades else None,
+                    top_genres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if genres
+                    else None,
+                    top_directors=dict(
+                        sorted(directors.items(), key=lambda x: x[1], reverse=True)[:5]
+                    )
+                    if directors
+                    else None,
+                    top_studios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if studios
+                    else None,
+                    by_decade=dict(sorted(decades.items())) if decades else None,
                 )
 
                 return LibraryStatsResponse(
                     name=target_section["title"],
                     type=library_type,
-                    totalItems=target_section.get("totalSize", 0),
-                    movieStats=movie_stats,
+                    total_items=target_section.get("totalSize", 0),
+                    movie_stats=movie_stats,
                 )
 
             elif library_type == "show":
@@ -192,17 +202,21 @@ async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorRe
                     shows=all_data.get("size", 0),
                     seasons=seasons_data.get("size", 0),
                     episodes=episodes_data.get("size", 0),
-                    unwatchedShows=unwatched_data.get("size", 0),
-                    topGenres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5]) if genres else None,
-                    topStudios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5]) if studios else None,
-                    byDecade=dict(sorted(decades.items())) if decades else None,
+                    unwatched_shows=unwatched_data.get("size", 0),
+                    top_genres=dict(sorted(genres.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if genres
+                    else None,
+                    top_studios=dict(sorted(studios.items(), key=lambda x: x[1], reverse=True)[:5])
+                    if studios
+                    else None,
+                    by_decade=dict(sorted(decades.items())) if decades else None,
                 )
 
                 return LibraryStatsResponse(
                     name=target_section["title"],
                     type=library_type,
-                    totalItems=target_section.get("totalSize", 0),
-                    showStats=show_stats,
+                    total_items=target_section.get("totalSize", 0),
+                    show_stats=show_stats,
                 )
 
             elif library_type == "artist":
@@ -277,27 +291,39 @@ async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorRe
 
                 music_stats = MusicStats(
                     count=all_data.get("size", 0),
-                    totalTracks=total_tracks,
-                    totalAlbums=total_albums,
-                    totalPlays=total_plays,
-                    topGenres=dict(sorted(all_genres.items(), key=lambda x: x[1], reverse=True)[:10]) if all_genres else None,
-                    topArtists=dict(sorted(top_artists.items(), key=lambda x: x[1], reverse=True)[:10]) if top_artists else None,
-                    topAlbums=dict(sorted(top_albums.items(), key=lambda x: x[1], reverse=True)[:10]) if top_albums else None,
-                    byYear=dict(sorted(all_years.items())) if all_years else None,
-                    audioFormats=audio_formats if audio_formats else None,
+                    total_tracks=total_tracks,
+                    total_albums=total_albums,
+                    total_plays=total_plays,
+                    top_genres=dict(
+                        sorted(all_genres.items(), key=lambda x: x[1], reverse=True)[:10]
+                    )
+                    if all_genres
+                    else None,
+                    top_artists=dict(
+                        sorted(top_artists.items(), key=lambda x: x[1], reverse=True)[:10]
+                    )
+                    if top_artists
+                    else None,
+                    top_albums=dict(
+                        sorted(top_albums.items(), key=lambda x: x[1], reverse=True)[:10]
+                    )
+                    if top_albums
+                    else None,
+                    by_year=dict(sorted(all_years.items())) if all_years else None,
+                    audio_formats=audio_formats if audio_formats else None,
                 )
 
                 return LibraryStatsResponse(
                     name=target_section["title"],
                     type=library_type,
-                    totalItems=target_section.get("totalSize", 0),
-                    musicStats=music_stats,
+                    total_items=target_section.get("totalSize", 0),
+                    music_stats=music_stats,
                 )
 
             return LibraryStatsResponse(
                 name=target_section["title"],
                 type=library_type,
-                totalItems=target_section.get("totalSize", 0),
+                total_items=target_section.get("totalSize", 0),
             )
 
     except Exception as e:
@@ -308,9 +334,11 @@ async def library_get_stats(library_name: str) -> LibraryStatsResponse | ErrorRe
     name="library_refresh",
     description="Refresh a specific library or all libraries",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=True)
+    annotations=ToolAnnotations(idempotentHint=True),
 )
-async def library_refresh(library_name: str | None = None) -> LibraryRefreshResponse | ErrorResponse:
+async def library_refresh(
+    library_name: str | None = None,
+) -> LibraryRefreshResponse | ErrorResponse:
     """Refresh a specific library or all libraries.
 
     Args:
@@ -341,8 +369,7 @@ async def library_refresh(library_name: str | None = None) -> LibraryRefreshResp
         else:
             plex.library.refresh()
             return LibraryRefreshResponse(
-                success=True,
-                message="Refreshing all libraries. This may take some time."
+                success=True, message="Refreshing all libraries. This may take some time."
             )
     except Exception as e:
         return ErrorResponse(message=f"Error refreshing library: {str(e)}")
@@ -352,9 +379,11 @@ async def library_refresh(library_name: str | None = None) -> LibraryRefreshResp
     name="library_scan",
     description="Scan a specific library or part of a library",
     tags={ToolTag.WRITE.value},
-    annotations=ToolAnnotations(idempotentHint=True)
+    annotations=ToolAnnotations(idempotentHint=True),
 )
-async def library_scan(library_name: str, path: str | None = None) -> LibraryScanResponse | ErrorResponse:
+async def library_scan(
+    library_name: str, path: str | None = None
+) -> LibraryScanResponse | ErrorResponse:
     """Scan a specific library or part of a library.
 
     Args:
@@ -385,7 +414,9 @@ async def library_scan(library_name: str, path: str | None = None) -> LibrarySca
                     message=f"Scanning path '{path}' in library '{section.title}'. This may take some time.",
                 )
             except NotFound:
-                return ErrorResponse(message=f"Path '{path}' not found in library '{section.title}'.")
+                return ErrorResponse(
+                    message=f"Path '{path}' not found in library '{section.title}'."
+                )
         else:
             section.update()
             return LibraryScanResponse(
@@ -400,7 +431,7 @@ async def library_scan(library_name: str, path: str | None = None) -> LibrarySca
     name="library_get_details",
     description="Get detailed information about a specific library, including folder paths and settings",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def library_get_details(library_name: str) -> LibraryDetailsResponse | ErrorResponse:
     """Get detailed information about a specific library, including folder paths and settings.
@@ -457,14 +488,14 @@ async def library_get_details(library_name: str) -> LibraryDetailsResponse | Err
             name=target_section.title,
             type=target_section.type,
             uuid=target_section.uuid,
-            totalItems=target_section.totalSize,
+            total_items=target_section.totalSize,
             locations=target_section.locations,
             agent=target_section.agent,
             scanner=target_section.scanner,
             language=target_section.language,
-            scannerSettings=scanner_settings,
-            agentSettings=agent_settings,
-            advancedSettings=advanced_settings,
+            scanner_settings=scanner_settings,
+            agent_settings=agent_settings,
+            advanced_settings=advanced_settings,
         )
     except Exception as e:
         return ErrorResponse(message=f"Error getting library details: {str(e)}")
@@ -474,9 +505,11 @@ async def library_get_details(library_name: str) -> LibraryDetailsResponse | Err
     name="library_get_recently_added",
     description="Get recently added media across all libraries or in a specific library",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
-async def library_get_recently_added(count: int = 50, library_name: str | None = None) -> LibraryRecentlyAddedResponse | ErrorResponse:
+async def library_get_recently_added(
+    count: int = 50, library_name: str | None = None
+) -> LibraryRecentlyAddedResponse | ErrorResponse:
     """Get recently added media across all libraries or in a specific library.
 
     Args:
@@ -516,12 +549,12 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
         if not recent:
             return LibraryRecentlyAddedResponse(
                 count=0,
-                requestedCount=count,
+                requested_count=count,
                 library=library_name if library_name else "All Libraries",
-                items={}
+                items={},
             )
 
-        items_by_type: dict[str, list[dict[str, str | int]]] = {}
+        items_by_type: dict[str, list[dict[str, Any] | RecentlyAddedItem]] = {}
 
         for item in recent:
             item_type = getattr(item, "type", "unknown")
@@ -594,9 +627,9 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
 
         return LibraryRecentlyAddedResponse(
             count=len(recent),
-            requestedCount=count,
+            requested_count=count,
             library=library_name if library_name else "All Libraries",
-            items=items_by_type
+            items=items_by_type,
         )
     except Exception as e:
         return ErrorResponse(message=f"Error getting recently added items: {str(e)}")
@@ -606,7 +639,7 @@ async def library_get_recently_added(count: int = 50, library_name: str | None =
     name="library_get_contents",
     description="Get the full contents of a specific library",
     tags={ToolTag.READ.value},
-    annotations=ToolAnnotations(readOnlyHint=True)
+    annotations=ToolAnnotations(readOnlyHint=True),
 )
 async def library_get_contents(library_name: str) -> LibraryContentsResponse | ErrorResponse:
     """Get the full contents of a specific library.
@@ -639,7 +672,7 @@ async def library_get_contents(library_name: str) -> LibraryContentsResponse | E
             all_data = await async_get_json(session, all_items_url, headers)
             all_data = all_data["MediaContainer"]
 
-            items: list[dict[str, str | int | bool | dict | None]] = []
+            items: list[LibraryContentItem | dict[str, Any]] = []
 
             if library_type == "movie":
                 for item in all_data.get("Metadata", []):
@@ -766,8 +799,8 @@ async def library_get_contents(library_name: str) -> LibraryContentsResponse | E
             return LibraryContentsResponse(
                 name=target_section["title"],
                 type=library_type,
-                totalItems=all_data.get("size", 0),
-                items=items
+                total_items=all_data.get("size", 0),
+                items=items,
             )
 
     except Exception as e:

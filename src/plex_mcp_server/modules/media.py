@@ -1,22 +1,43 @@
 import builtins
 import contextlib
-import json
 import os
 from typing import TYPE_CHECKING, Any, cast
 
+from mcp.types import ToolAnnotations
 from plexapi.audio import Album, Artist, Track
 from plexapi.base import PlexPartialObject
 from plexapi.exceptions import NotFound
 from plexapi.video import Episode, Movie, Show, Video
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    AvailableArtworkItem,
+    ErrorResponse,
+    MediaArtworkResponse,
+    MediaDeleteResponse,
+    MediaDetailsListResponse,
+    MediaDetailsResponse,
+    MediaEditResponse,
+    MediaListArtworkResponse,
+    MediaSearchResponse,
+    MediaSetArtworkResponse,
+    SearchResultItem,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
     from plexapi.video import Season
 
 
-@mcp.tool()
-async def media_search(query: str, content_type: str | None = None) -> str:
+@mcp.tool(
+    name="media_search",
+    description="Search for media across all libraries",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def media_search(
+    query: str, content_type: str | None = None
+) -> MediaSearchResponse | ErrorResponse:
     """Search for media across all libraries.
 
     Args:
@@ -33,12 +54,7 @@ async def media_search(query: str, content_type: str | None = None) -> str:
         plex_token = os.environ.get("PLEX_TOKEN", "")
 
         if not plex_url or not plex_token:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": "PLEX_URL or PLEX_TOKEN environment variables not set",
-                }
-            )
+            return ErrorResponse(message="PLEX_URL or PLEX_TOKEN environment variables not set")
 
         # Prepare the search query parameters
         params = {
@@ -86,17 +102,15 @@ async def media_search(query: str, content_type: str | None = None) -> str:
 
         # For consistency, return in the same format as before but using the direct HTTP response
         if "MediaContainer" not in data or "SearchResult" not in data.get("MediaContainer", {}):
-            return json.dumps(
-                {
-                    "status": "success",
-                    "message": f"No results found for '{query}'.",
-                    "count": 0,
-                    "results": [],
-                }
+            return MediaSearchResponse(
+                status="success",
+                message=f"No results found for '{query}'.",
+                total_count=0,
+                results_by_type={},
             )
 
         # Format and organize search results
-        results_by_type: dict[str, list[dict[str, Any]]] = {}
+        results_by_type: dict[str, list[dict[str, Any] | SearchResultItem]] = {}
         total_count = 0
 
         for search_result in data["MediaContainer"]["SearchResult"]:
@@ -214,7 +228,7 @@ async def media_search(query: str, content_type: str | None = None) -> str:
 
         # For cleaner display, organize by type
         type_order = ["track", "album", "artist", "movie", "show", "season", "episode"]
-        ordered_results = {}
+        ordered_results: dict[str, list[dict[str, Any] | SearchResultItem]] = {}
         for type_name in type_order:
             if type_name in results_by_type:
                 ordered_results[type_name] = results_by_type[type_name]
@@ -224,27 +238,29 @@ async def media_search(query: str, content_type: str | None = None) -> str:
             if type_name not in ordered_results:
                 ordered_results[type_name] = results_by_type[type_name]
 
-        return json.dumps(
-            {
-                "status": "success",
-                "message": f"Found {total_count} results for '{query}'",
-                "query": query,
-                "content_type": content_type,
-                "total_count": total_count,
-                "results_by_type": ordered_results,
-            },
-            indent=2,
+        return MediaSearchResponse(
+            status="success",
+            message=f"Found {total_count} results for '{query}'",
+            query=query,
+            content_type=content_type,
+            total_count=total_count,
+            results_by_type=ordered_results,
         )
     except Exception as e:
-        return json.dumps({"status": "error", "message": f"Error searching: {str(e)}"})
+        return ErrorResponse(message=f"Error searching: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_get_details",
+    description="Get detailed information about a specific media item",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def media_get_details(
     media_title: str | None = None,
     media_id: int | None = None,
     library_name: str | None = None,
-) -> str:
+) -> MediaDetailsResponse | MediaDetailsListResponse | ErrorResponse:
     """Get detailed information about a specific media item using PlexAPI's Media and Mixin functions.
 
     Args:
@@ -257,9 +273,7 @@ async def media_get_details(
 
         # Validate that at least one identifier is provided
         if media_id is None and not media_title:
-            return json.dumps(
-                {"error": "Either media_id or media_title must be provided."}, indent=4
-            )
+            return ErrorResponse(message="Either media_id or media_title must be provided.")
 
         # Search for the media
         if media_id is not None:
@@ -268,12 +282,12 @@ async def media_get_details(
                 media: PlexPartialObject | None = plex.fetchItem(media_id)
                 if media:
                     details = get_media_details(media)
-                    return json.dumps(details, indent=4)
+                    return MediaDetailsResponse(**details)
                 else:
-                    return json.dumps({})
+                    return ErrorResponse(message=f"Media with ID {media_id} not found")
             except Exception as e:
-                return json.dumps(
-                    {"error": f"Could not find media with ID {media_id}. Error: {str(e)}"}, indent=4
+                return ErrorResponse(
+                    message=f"Could not find media with ID {media_id}. Error: {str(e)}"
                 )
         else:
             # Otherwise search by title
@@ -283,12 +297,8 @@ async def media_get_details(
                     target_section = plex.library.section(library_name)
                     results = target_section.search(query=media_title)
                 except Exception as e:
-                    return json.dumps(
-                        {
-                            "status": "error",
-                            "message": f"Error searching library '{library_name}': {str(e)}",
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Error searching library '{library_name}': {str(e)}"
                     )
             else:
                 # Search in all libraries, including specific searches for music content
@@ -322,7 +332,7 @@ async def media_get_details(
                         results.extend(artist_results)
 
             if not results:
-                return json.dumps({"error": f"No media found matching '{media_title}'."}, indent=4)
+                return ErrorResponse(message=f"No media found matching '{media_title}'.")
 
             # Multiple results handling - return all matches
             if len(results) > 1:
@@ -344,21 +354,18 @@ async def media_get_details(
                 simplified_results = [item for item in simplified_results if item["id"] is not None]
 
                 if simplified_results:
-                    return json.dumps(simplified_results, indent=4)
+                    return MediaDetailsListResponse(items=simplified_results)
                 else:
-                    return json.dumps(
-                        {
-                            "error": f"Found results for '{media_title}' but couldn't process them properly."
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Found results for '{media_title}' but couldn't process them properly."
                     )
             else:
                 # Single result
                 details = get_media_details(results[0])
-                return json.dumps(details, indent=4)
+                return MediaDetailsResponse(**details)
 
     except Exception as e:
-        return json.dumps({"error": f"Error getting media details: {str(e)}"}, indent=4)
+        return ErrorResponse(message=f"Error getting media details: {str(e)}")
 
 
 # Helper function to extract media details
@@ -650,20 +657,25 @@ def get_media_details(
     return details
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_edit_metadata",
+    description="Edit metadata for a specific media item",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
 async def media_edit_metadata(
     media_title: str,
     library_name: str | None = None,
     new_title: str | None = None,
     new_summary: str | None = None,
     new_rating: float | None = None,
-    new_release_date: str | None = None,  # Add this parameter
+    new_release_date: str | None = None,
     new_genre: str | None = None,
     remove_genre: str | None = None,
     new_director: str | None = None,
     new_studio: str | None = None,
     new_tags: list[str] | None = None,
-) -> str:
+) -> MediaEditResponse | ErrorResponse:
     """Edit metadata for a specific media item.
 
     Args:
@@ -688,15 +700,17 @@ async def media_edit_metadata(
                 library = plex.library.section(library_name)
                 results = library.search(query=media_title)
             except NotFound:
-                return f"Library '{library_name}' not found."
+                return ErrorResponse(message=f"Library '{library_name}' not found.")
         else:
             results = plex.search(query=media_title)
 
         if not results:
-            return f"No media found matching '{media_title}'."
+            return ErrorResponse(message=f"No media found matching '{media_title}'.")
 
         if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+            return ErrorResponse(
+                message=f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+            )
 
         media = results[0]
         changes_made = []
@@ -707,21 +721,21 @@ async def media_edit_metadata(
                 media.editTitle(new_title)
                 changes_made.append(f"title changed to '{new_title}'")
             except Exception as e:
-                return f"Error setting title: {str(e)}"
+                return ErrorResponse(message=f"Error setting title: {str(e)}")
 
         if new_summary:
             try:
                 media.editSummary(new_summary)
                 changes_made.append("summary updated")
             except Exception as e:
-                return f"Error setting summary: {str(e)}"
+                return ErrorResponse(message=f"Error setting summary: {str(e)}")
 
         if new_rating is not None:
             try:
                 media.rate(new_rating)
                 changes_made.append(f"rating changed to {new_rating}")
             except Exception as e:
-                return f"Error setting rating: {str(e)}"
+                return ErrorResponse(message=f"Error setting rating: {str(e)}")
 
         if new_studio:
             try:
@@ -729,9 +743,11 @@ async def media_edit_metadata(
                     media.editStudio(new_studio)
                     changes_made.append(f"studio changed to '{new_studio}'")
                 else:
-                    return "This media type doesn't support changing the studio"
+                    return ErrorResponse(
+                        message="This media type doesn't support changing the studio"
+                    )
             except Exception as e:
-                return f"Error setting studio: {str(e)}"
+                return ErrorResponse(message=f"Error setting studio: {str(e)}")
 
         # Handle genres using the appropriate mixin methods
         if new_genre:
@@ -743,9 +759,9 @@ async def media_edit_metadata(
                         media.addGenre(new_genre)
                         changes_made.append(f"added genre '{new_genre}'")
                 else:
-                    return "This media type doesn't support adding genres"
+                    return ErrorResponse(message="This media type doesn't support adding genres")
             except Exception as e:
-                return f"Error adding genre: {str(e)}"
+                return ErrorResponse(message=f"Error adding genre: {str(e)}")
 
         if remove_genre:
             try:
@@ -758,9 +774,9 @@ async def media_edit_metadata(
                         media.removeGenre(matching_genres[0])
                         changes_made.append(f"removed genre '{remove_genre}'")
                 else:
-                    return "This media type doesn't support removing genres"
+                    return ErrorResponse(message="This media type doesn't support removing genres")
             except Exception as e:
-                return f"Error removing genre: {str(e)}"
+                return ErrorResponse(message=f"Error removing genre: {str(e)}")
 
         # Handle directors using the appropriate mixin methods
         if new_director and hasattr(media, "addDirector"):
@@ -771,7 +787,7 @@ async def media_edit_metadata(
                     media.addDirector(new_director)
                     changes_made.append(f"added director '{new_director}'")
             except Exception as e:
-                return f"Error adding director: {str(e)}"
+                return ErrorResponse(message=f"Error adding director: {str(e)}")
 
                 # Add handling for release date
         if new_release_date:
@@ -784,9 +800,11 @@ async def media_edit_metadata(
                     media.editOriginallyAvailable(date_obj)
                     changes_made.append(f"updated release date to '{new_release_date}'")
                 else:
-                    return "This media type doesn't support editing release dates"
+                    return ErrorResponse(
+                        message="This media type doesn't support editing release dates"
+                    )
             except Exception as e:
-                return f"Error updating release date: {str(e)}"
+                return ErrorResponse(message=f"Error updating release date: {str(e)}")
 
         # Handle tags/labels
         if new_tags:
@@ -801,9 +819,11 @@ async def media_edit_metadata(
                             media.addLabel(tag)
                             changes_made.append(f"added tag '{tag}'")
                     else:
-                        return "This media type doesn't support adding tags/labels"
+                        return ErrorResponse(
+                            message="This media type doesn't support adding tags/labels"
+                        )
                 except Exception as e:
-                    return f"Error adding tag '{tag}': {str(e)}"
+                    return ErrorResponse(message=f"Error adding tag '{tag}': {str(e)}")
 
         # Refresh to apply changes
         # Changes might still be applied even if refresh fails
@@ -811,14 +831,21 @@ async def media_edit_metadata(
             media.refresh()
 
         if not changes_made:
-            return f"No changes were made to '{media.title}'."
+            return MediaEditResponse(message=f"No changes were made to '{media.title}'.")
 
-        return f"Successfully updated metadata for '{media.title}'. Changes: {', '.join(changes_made)}."
+        return MediaEditResponse(
+            message=f"Successfully updated metadata for '{media.title}'. Changes: {', '.join(changes_made)}."
+        )
     except Exception as e:
-        return f"Error editing metadata: {str(e)}"
+        return ErrorResponse(message=f"Error editing metadata: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_get_artwork",
+    description="Get images for a specific media item",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def media_get_artwork(
     media_title: str | None = None,
     media_id: int | None = None,
@@ -826,7 +853,7 @@ async def media_get_artwork(
     image_types: list[str] | None = None,
     output_format: str = "base64",
     output_dir: str = "./",
-) -> str:
+) -> MediaArtworkResponse | ErrorResponse:
     """Get images for a specific media item.
 
     Args:
@@ -844,9 +871,7 @@ async def media_get_artwork(
 
         # Validate that at least one identifier is provided
         if not media_id and not media_title:
-            return json.dumps(
-                {"error": "Either media_id or media_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either media_id or media_title must be provided")
 
         # Find the media
         media = None
@@ -856,9 +881,9 @@ async def media_get_artwork(
             try:
                 media = plex.fetchItem(media_id)
                 if not media:
-                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Media with ID '{media_id}' not found")
             except Exception as e:
-                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching media by ID: {str(e)}")
         else:
             # Search for the media by title
             results = []
@@ -867,13 +892,13 @@ async def media_get_artwork(
                     library = plex.library.section(library_name)
                     results = library.search(query=media_title)
                 except NotFound:
-                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Library '{library_name}' not found")
             else:
                 # Search in all libraries
                 results = plex.search(query=media_title)
 
             if not results:
-                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+                return ErrorResponse(message=f"No media found matching '{media_title}'")
 
             # If multiple results, return the possible matches
             if len(results) > 1:
@@ -887,7 +912,7 @@ async def media_get_artwork(
                             "year": getattr(item, "year", None),
                         }
                     )
-                return json.dumps(matches, indent=4)
+                return MediaArtworkResponse(items=matches)
 
             media = results[0]
 
@@ -990,18 +1015,23 @@ async def media_get_artwork(
                 result[img_type] = {"error": f"Invalid output format: {output_format}"}
 
         # Return all results
-        return json.dumps(result, indent=4)
+        return MediaArtworkResponse(items=result)
 
     except Exception as e:
-        return json.dumps({"error": f"Error getting images: {str(e)}"}, indent=4)
+        return ErrorResponse(message=f"Error getting images: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_delete",
+    description="Delete a media item from the Plex library",
+    tags={ToolTag.DELETE.value},
+    annotations=ToolAnnotations(destructiveHint=True, idempotentHint=True),
+)
 async def media_delete(
     media_title: str | None = None,
     media_id: int | None = None,
     library_name: str | None = None,
-) -> str:
+) -> MediaDeleteResponse | MediaDetailsListResponse | ErrorResponse:
     """Delete a media item from the Plex library.
 
     Args:
@@ -1014,9 +1044,7 @@ async def media_delete(
 
         # Validate that at least one identifier is provided
         if not media_id and not media_title:
-            return json.dumps(
-                {"error": "Either media_id or media_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either media_id or media_title must be provided")
 
         # Find the media
         media = None
@@ -1032,7 +1060,7 @@ async def media_delete(
                     media = None
 
                 if not media:
-                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Media with ID '{media_id}' not found")
 
                 # Get the file path for information
                 file_paths = []
@@ -1053,22 +1081,17 @@ async def media_delete(
                 # Perform the deletion
                 try:
                     media.delete()
-                    return json.dumps(
-                        {
-                            "deleted": True,
-                            "title": media_title_to_return,
-                            "type": media_type,
-                            "files_on_disk": file_paths,
-                        },
-                        indent=4,
+                    return MediaDeleteResponse(
+                        deleted=True,
+                        title=media_title_to_return,
+                        type=media_type,
+                        files_on_disk=file_paths,
                     )
                 except Exception as delete_error:
-                    return json.dumps(
-                        {"error": f"Error during deletion: {str(delete_error)}"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Error during deletion: {str(delete_error)}")
 
             except Exception as e:
-                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching media by ID: {str(e)}")
         else:
             # Search for the media by title
             results = []
@@ -1077,13 +1100,13 @@ async def media_delete(
                     library = plex.library.section(library_name)
                     results = library.search(query=media_title)
                 except NotFound:
-                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Library '{library_name}' not found")
             else:
                 # Search in all libraries
                 results = plex.search(query=media_title)
 
             if not results:
-                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+                return ErrorResponse(message=f"No media found matching '{media_title}'")
 
             # Filter results to only include valid media types
             valid_media_results = []
@@ -1101,9 +1124,8 @@ async def media_delete(
 
             # If no valid media results, return an error
             if not valid_media_results:
-                return json.dumps(
-                    {"error": f"Found results for '{media_title}' but none were valid media items"},
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Found results for '{media_title}' but none were valid media items"
                 )
 
             # When searching by title, always return multiple matches if multiple are found
@@ -1154,13 +1176,10 @@ async def media_delete(
                         continue
 
                 if matches:
-                    return json.dumps(matches, indent=4)
+                    return MediaDetailsListResponse(items=matches)
                 else:
-                    return json.dumps(
-                        {
-                            "error": f"Found results for '{media_title}' but none had valid attributes"
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Found results for '{media_title}' but none had valid attributes"
                     )
             else:
                 # Use the single valid result
@@ -1185,25 +1204,25 @@ async def media_delete(
                 # Perform the deletion
                 try:
                     media.delete()
-                    return json.dumps(
-                        {
-                            "deleted": True,
-                            "title": media_title_to_return,
-                            "type": media_type,
-                            "files_on_disk": file_paths,
-                        },
-                        indent=4,
+                    return MediaDeleteResponse(
+                        deleted=True,
+                        title=media_title_to_return,
+                        type=media_type,
+                        files_on_disk=file_paths,
                     )
                 except Exception as delete_error:
-                    return json.dumps(
-                        {"error": f"Error during deletion: {str(delete_error)}"}, indent=4
-                    )
+                    return ErrorResponse(message=f"Error during deletion: {str(delete_error)}")
 
     except Exception as e:
-        return json.dumps({"error": f"Error deleting media: {str(e)}"}, indent=4)
+        return ErrorResponse(message=f"Error deleting media: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_set_artwork",
+    description="Set artwork for a specific media item",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
 async def media_set_artwork(
     media_title: str,
     library_name: str | None = None,
@@ -1211,7 +1230,7 @@ async def media_set_artwork(
     filepath: str | None = None,
     url: str | None = None,
     lock: bool = False,
-) -> str:
+) -> MediaSetArtworkResponse | ErrorResponse:
     """Set artwork for a specific media item.
 
     Args:
@@ -1224,17 +1243,19 @@ async def media_set_artwork(
     """
     try:
         if not filepath and not url:
-            return "Error: Either filepath or url must be provided."
+            return ErrorResponse(message="Either filepath or url must be provided.")
 
         if filepath and url:
-            return "Error: Please provide either filepath OR url, not both."
+            return ErrorResponse(message="Please provide either filepath OR url, not both.")
 
         # Normalize art type
         art_type = art_type.lower()
         valid_types = ["poster", "background", "art", "logo"]
 
         if art_type not in valid_types:
-            return f"Invalid art type: {art_type}. Supported types: {', '.join(valid_types)}"
+            return ErrorResponse(
+                message=f"Invalid art type: {art_type}. Supported types: {', '.join(valid_types)}"
+            )
 
         # Map art types to their upload methods
         upload_map = {
@@ -1260,29 +1281,33 @@ async def media_set_artwork(
                 library = plex.library.section(library_name)
                 results = library.search(query=media_title)
             except NotFound:
-                return f"Library '{library_name}' not found."
+                return ErrorResponse(message=f"Library '{library_name}' not found.")
         else:
             results = plex.search(query=media_title)
 
         if not results:
-            return f"No media found matching '{media_title}'."
+            return ErrorResponse(message=f"No media found matching '{media_title}'.")
 
         if len(results) > 1:
-            return f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+            return ErrorResponse(
+                message=f"Multiple items found with title '{media_title}'. Please specify a library or use a more specific title."
+            )
 
         media = results[0]
 
         # Check if the object supports this art type
         upload_method = upload_map.get(art_type)
         if not upload_method or not hasattr(media, upload_method):
-            return f"This media item doesn't support setting {art_type} artwork."
+            return ErrorResponse(
+                message=f"This media item doesn't support setting {art_type} artwork."
+            )
 
         # Upload the artwork
         upload_fn = getattr(media, upload_method)
 
         if filepath:
             if not os.path.isfile(filepath):
-                return f"Artwork file not found: {filepath}"
+                return ErrorResponse(message=f"Artwork file not found: {filepath}")
             upload_fn(filepath=filepath)
         else:  # url
             upload_fn(url=url)
@@ -1293,22 +1318,33 @@ async def media_set_artwork(
             if lock_method and hasattr(media, lock_method):
                 lock_fn = getattr(media, lock_method)
                 lock_fn()
-                return f"Successfully set and locked {art_type} artwork for '{media.title}'."
+                return MediaSetArtworkResponse(
+                    message=f"Successfully set and locked {art_type} artwork for '{media.title}'."
+                )
             else:
-                return f"No lock method found for {art_type} for artwork '{media.title}'."
+                return ErrorResponse(
+                    message=f"No lock method found for {art_type} for artwork '{media.title}'."
+                )
 
-        return f"Successfully set {art_type} artwork for '{media.title}'."
+        return MediaSetArtworkResponse(
+            message=f"Successfully set {art_type} artwork for '{media.title}'."
+        )
     except Exception as e:
-        return f"Error setting {art_type} artwork: {str(e)}"
+        return ErrorResponse(message=f"Error setting {art_type} artwork: {str(e)}")
 
 
-@mcp.tool()
+@mcp.tool(
+    name="media_list_available_artwork",
+    description="List all available artwork for a specific media item",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
 async def media_list_available_artwork(
     media_title: str | None = None,
     media_id: int | None = None,
     library_name: str | None = None,
     art_type: str = "poster",
-) -> str:
+) -> MediaListArtworkResponse | MediaDetailsListResponse | ErrorResponse:
     """List all available artwork for a specific media item.
 
     Args:
@@ -1320,9 +1356,7 @@ async def media_list_available_artwork(
     try:
         # Validate that at least one identifier is provided
         if not media_id and not media_title:
-            return json.dumps(
-                {"error": "Either media_id or media_title must be provided"}, indent=4
-            )
+            return ErrorResponse(message="Either media_id or media_title must be provided")
 
         # Normalize art type
         art_type = art_type.lower()
@@ -1331,11 +1365,8 @@ async def media_list_available_artwork(
         art_methods = {"poster": "posters", "background": "arts", "art": "arts", "logo": "logos"}
 
         if art_type not in art_methods:
-            return json.dumps(
-                {
-                    "error": f"Invalid art type: {art_type}. Supported types: {', '.join(art_methods.keys())}"
-                },
-                indent=4,
+            return ErrorResponse(
+                message=f"Invalid art type: {art_type}. Supported types: {', '.join(art_methods.keys())}"
             )
 
         plex = connect_to_plex()
@@ -1348,7 +1379,7 @@ async def media_list_available_artwork(
             try:
                 media = plex.fetchItem(media_id)
                 if not media:
-                    return json.dumps({"error": f"Media with ID '{media_id}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Media with ID '{media_id}' not found")
 
                 # Verify object type is a media item that can have artwork
                 if not hasattr(media, "type") or getattr(media, "type", None) not in [
@@ -1360,14 +1391,11 @@ async def media_list_available_artwork(
                     "album",
                     "track",
                 ]:
-                    return json.dumps(
-                        {
-                            "error": f"The item with ID {media_id} is not a media item that can have artwork"
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"The item with ID {media_id} is not a media item that can have artwork"
                     )
             except Exception as e:
-                return json.dumps({"error": f"Error fetching media by ID: {str(e)}"}, indent=4)
+                return ErrorResponse(message=f"Error fetching media by ID: {str(e)}")
         else:
             # Search for the media by title
             if library_name:
@@ -1375,12 +1403,12 @@ async def media_list_available_artwork(
                     library = plex.library.section(library_name)
                     results = library.search(query=media_title)
                 except NotFound:
-                    return json.dumps({"error": f"Library '{library_name}' not found"}, indent=4)
+                    return ErrorResponse(message=f"Library '{library_name}' not found")
             else:
                 results = plex.search(query=media_title)
 
             if not results:
-                return json.dumps({"error": f"No media found matching '{media_title}'"}, indent=4)
+                return ErrorResponse(message=f"No media found matching '{media_title}'")
 
             # Filter results to only include valid media types
             valid_media_results = []
@@ -1398,11 +1426,8 @@ async def media_list_available_artwork(
 
             # If no valid media results, return an error
             if not valid_media_results:
-                return json.dumps(
-                    {
-                        "error": f"Found results for '{media_title}' but none were valid media items that can have artwork"
-                    },
-                    indent=4,
+                return ErrorResponse(
+                    message=f"Found results for '{media_title}' but none were valid media items that can have artwork"
                 )
 
             # When searching by title, always return multiple matches if multiple are found
@@ -1441,13 +1466,10 @@ async def media_list_available_artwork(
                         continue
 
                 if matches:
-                    return json.dumps(matches, indent=4)
+                    return MediaDetailsListResponse(items=matches)
                 else:
-                    return json.dumps(
-                        {
-                            "error": f"Found results for '{media_title}' but none had valid attributes"
-                        },
-                        indent=4,
+                    return ErrorResponse(
+                        message=f"Found results for '{media_title}' but none had valid attributes"
                     )
             else:
                 # Use the single valid result
@@ -1456,9 +1478,7 @@ async def media_list_available_artwork(
         # Check if the object supports this art type
         art_method = art_methods.get(art_type, "")
         if not hasattr(media, art_method):
-            return json.dumps(
-                {"error": f"This media item doesn't support {art_type} artwork"}, indent=4
-            )
+            return ErrorResponse(message=f"This media item doesn't support {art_type} artwork")
 
         # Get available artwork safely
         try:
@@ -1466,10 +1486,10 @@ async def media_list_available_artwork(
             artwork_list = get_art_fn()
 
             if not artwork_list:
-                return json.dumps({"error": f"No {art_type} artwork found for media"}, indent=4)
+                return ErrorResponse(message=f"No {art_type} artwork found for media")
 
             # Build response as JSON
-            artwork_info = []
+            artwork_info: list[dict[str, str | int | bool | None] | AvailableArtworkItem] = []
 
             for i, art in enumerate(artwork_list, 1):
                 art_data = {
@@ -1483,19 +1503,14 @@ async def media_list_available_artwork(
                 }
                 artwork_info.append(art_data)
 
-            return json.dumps(
-                {
-                    "media_title": getattr(media, "title", "Unknown"),
-                    "media_id": getattr(media, "ratingKey", None),
-                    "art_type": art_type,
-                    "count": len(artwork_info),
-                    "artwork": artwork_info,
-                },
-                indent=4,
+            return MediaListArtworkResponse(
+                media_title=getattr(media, "title", "Unknown"),
+                media_id=getattr(media, "ratingKey", None),
+                art_type=art_type,
+                count=len(artwork_info),
+                artwork=artwork_info,
             )
         except Exception as art_error:
-            return json.dumps(
-                {"error": f"Error retrieving {art_type} artwork: {str(art_error)}"}, indent=4
-            )
+            return ErrorResponse(message=f"Error retrieving {art_type} artwork: {str(art_error)}")
     except Exception as e:
-        return json.dumps({"error": f"Error listing {art_type} artwork: {str(e)}"}, indent=4)
+        return ErrorResponse(message=f"Error listing {art_type} artwork: {str(e)}")

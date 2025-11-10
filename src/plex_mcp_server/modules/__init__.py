@@ -2,6 +2,7 @@
 # pyright: reportUnusedImport=none
 import os
 import time
+from typing import Any
 
 from fastmcp import FastMCP
 from plexapi.myplex import MyPlexAccount
@@ -21,12 +22,12 @@ except ImportError:
     print("Install with: pip install python-dotenv")
 
 # Initialize FastMCP server
-mcp = FastMCP("plex-server")
+mcp = FastMCP[Any]("plex-server")
 
 # Global variables for Plex connection
 plex_url = os.environ.get("PLEX_URL", "")
 plex_token = os.environ.get("PLEX_TOKEN", "")
-server: PlexServer | None = None
+plex_server: PlexServer | None = None
 last_connection_time: float = 0.0
 CONNECTION_TIMEOUT = 30  # seconds
 SESSION_TIMEOUT = 60 * 30  # 30 minutes
@@ -37,20 +38,20 @@ def connect_to_plex() -> PlexServer:
 
     Returns a PlexServer instance with automatic reconnection if needed.
     """
-    global server, last_connection_time
+    global plex_server, last_connection_time
     current_time = time.time()
 
     # Check if we have a valid connection
-    if server is not None and current_time - last_connection_time < SESSION_TIMEOUT:
+    if plex_server is not None and current_time - last_connection_time < SESSION_TIMEOUT:
         # Verify the connection is still alive with a simple request
         try:
             # Simple API call to verify the connection
-            server.library.sections()
+            plex_server.library.sections()
             last_connection_time = current_time
-            return server
+            return plex_server
         except Exception:
             # Connection failed, reset and create a new one
-            server = None
+            plex_server = None
 
     # Create a new connection
     max_retries = 3
@@ -60,9 +61,9 @@ def connect_to_plex() -> PlexServer:
         try:
             # Try connecting directly with a token
             if plex_token:
-                server = PlexServer(plex_url, plex_token, timeout=CONNECTION_TIMEOUT)
+                plex_server = PlexServer(plex_url, plex_token, timeout=CONNECTION_TIMEOUT)
                 last_connection_time = current_time
-                return server
+                return plex_server
 
             # If no direct connection, try with MyPlex account
             username = os.environ.get("PLEX_USERNAME")
@@ -82,13 +83,13 @@ def connect_to_plex() -> PlexServer:
                         # Try each connection until one works
                         for connection in resource.connections:
                             try:
-                                server = PlexServer(
+                                plex_server = PlexServer(
                                     connection.uri,
                                     account.authenticationToken,
                                     timeout=CONNECTION_TIMEOUT,
                                 )
                                 last_connection_time = current_time
-                                return server
+                                return plex_server
                             except Exception:
                                 continue
 
@@ -99,9 +100,9 @@ def connect_to_plex() -> PlexServer:
                 )
                 if connected_server is None:
                     raise ValueError(f"Failed to connect to server '{server_name}'")
-                server = connected_server
+                plex_server = connected_server
                 last_connection_time = current_time
-                return server
+                return plex_server
 
             raise ValueError("Insufficient Plex credentials provided")
 
@@ -126,7 +127,7 @@ from . import (
     library,  # noqa: F401
     media,  # noqa: F401
     playlist,  # noqa: F401
+    server,  # noqa: F401
     sessions,  # noqa: F401
     user,  # noqa: F401
 )
-from . import server as server_module  # noqa: F401

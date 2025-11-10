@@ -1,13 +1,27 @@
 import asyncio
 import contextlib
-import json
 import os
 import traceback
 from typing import TYPE_CHECKING, Any
 from zipfile import ZipFile
 
 import requests
+from mcp.types import ToolAnnotations
 
+from ..types.enums import ToolTag
+from ..types.models import (
+    AlertInfo,
+    BandwidthStats,
+    ErrorResponse,
+    ResourceStats,
+    ServerAlertsResponse,
+    ServerBandwidthResponse,
+    ServerButlerTasksResponse,
+    ServerInfoResponse,
+    ServerLogsResponse,
+    ServerResourcesResponse,
+    ServerRunButlerResponse,
+)
 from . import connect_to_plex, mcp
 
 if TYPE_CHECKING:
@@ -16,8 +30,15 @@ if TYPE_CHECKING:
     from plexapi.server import PlexServer, StatisticsBandwidth, StatisticsResources
 
 
-@mcp.tool()
-async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -> str:
+@mcp.tool(
+    name="server_get_plex_logs",
+    description="Get Plex server logs",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_plex_logs(
+    num_lines: int = 100, log_type: str = "server"
+) -> ServerLogsResponse | ErrorResponse:
     """Get Plex server logs.
 
     Args:
@@ -69,7 +90,10 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -
                 with zipfile.ZipFile(zip_buffer, "r") as zip_ref:
                     log_content = extract_log_from_zip(zip_ref, log_file_name)
             except zipfile.BadZipFile:
-                return f"Downloaded data is not a valid zip file. First 100 bytes: {logs_path_or_data[:100]}"
+                return ServerLogsResponse(
+                    logs="",
+                    error=f"Downloaded data is not a valid zip file. First 100 bytes: {logs_path_or_data[:100]}",
+                )
 
         # Extract the last num_lines from the log content
         log_lines = log_content.splitlines()
@@ -78,9 +102,11 @@ async def server_get_plex_logs(num_lines: int = 100, log_type: str = "server") -
         result = f"Last {len(log_lines)} lines of {log_file_name}:\n\n"
         result += "\n".join(log_lines)
 
-        return result
+        return ServerLogsResponse(logs=result)
     except Exception as e:
-        return f"Error getting Plex logs: {str(e)}\n{traceback.format_exc()}"
+        return ServerLogsResponse(
+            logs="", error=f"Error getting Plex logs: {str(e)}\n{traceback.format_exc()}"
+        )
 
 
 def extract_log_from_zip(zip_ref: ZipFile, log_file_name: str) -> str:
@@ -104,8 +130,13 @@ def extract_log_from_zip(zip_ref: ZipFile, log_file_name: str) -> str:
     return log_content
 
 
-@mcp.tool()
-async def server_get_info() -> str:
+@mcp.tool(
+    name="server_get_info",
+    description="Get detailed information about the Plex server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_info() -> ServerInfoResponse | ErrorResponse:
     """Get detailed information about the Plex server.
 
     Returns:
@@ -138,13 +169,20 @@ async def server_get_info() -> str:
         }
 
         # Format server information as JSON
-        return json.dumps({"status": "success", "data": server_info}, indent=4)
+        return ServerInfoResponse(status="success", data=server_info)
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
-async def server_get_bandwidth(timespan: str | None = None, lan: str | None = None) -> str:
+@mcp.tool(
+    name="server_get_bandwidth",
+    description="Get bandwidth statistics from the Plex server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_bandwidth(
+    timespan: str | None = None, lan: str | None = None
+) -> ServerBandwidthResponse | ErrorResponse:
     """Get bandwidth statistics from the Plex server.
 
     Args:
@@ -158,7 +196,7 @@ async def server_get_bandwidth(timespan: str | None = None, lan: str | None = No
         plex: PlexServer = connect_to_plex()
 
         # Get bandwidth information
-        bandwidth_stats = []
+        bandwidth_stats: list[dict[str, str | int | bool | None] | BandwidthStats] = []
 
         if hasattr(plex, "bandwidth"):
             # Prepare kwargs for bandwidth() call
@@ -208,13 +246,18 @@ async def server_get_bandwidth(timespan: str | None = None, lan: str | None = No
                 bandwidth_stats.append(stats)
 
         # Format bandwidth information as JSON
-        return json.dumps({"status": "success", "data": bandwidth_stats}, indent=4)
+        return ServerBandwidthResponse(status="success", data=bandwidth_stats)
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
-async def server_get_current_resources() -> str:
+@mcp.tool(
+    name="server_get_current_resources",
+    description="Get resource usage information from the Plex server",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_current_resources() -> ServerResourcesResponse | ErrorResponse:
     """Get resource usage information from the Plex server.
 
     Returns:
@@ -224,7 +267,7 @@ async def server_get_current_resources() -> str:
         plex: PlexServer = connect_to_plex()
 
         # Get resource information
-        resources_data = []
+        resources_data: list[dict[str, str | int | float | None] | ResourceStats] = []
 
         if hasattr(plex, "resources"):
             server_resources: Sequence[StatisticsResources] = [
@@ -252,13 +295,18 @@ async def server_get_current_resources() -> str:
                 resources_data.append(resource_entry)
 
         # Format resource information as JSON
-        return json.dumps({"status": "success", "data": resources_data}, indent=4)
+        return ServerResourcesResponse(status="success", data=resources_data)
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
-async def server_get_butler_tasks() -> str:
+@mcp.tool(
+    name="server_get_butler_tasks",
+    description="Get information about Plex Butler tasks",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_butler_tasks() -> ServerButlerTasksResponse | ErrorResponse:
     """Get information about Plex Butler tasks.
 
     Returns:
@@ -304,37 +352,38 @@ async def server_get_butler_tasks() -> str:
                     butler_tasks.append(task)
 
                 # Return the butler tasks directly in the data field
-                return json.dumps({"status": "success", "data": butler_tasks}, indent=4)
+                return ServerButlerTasksResponse(status="success", data=butler_tasks)
             except ET.ParseError:
                 # Return the raw response if XML parsing fails
-                return json.dumps(
-                    {
-                        "status": "error",
-                        "message": "Failed to parse XML response",
-                        "raw_response": response.text,
-                    },
-                    indent=4,
+                return ServerButlerTasksResponse(
+                    status="error",
+                    message="Failed to parse XML response",
+                    data=None,
+                    raw_response=response.text,
                 )
         else:
-            return json.dumps(
-                {
-                    "status": "error",
-                    "message": f"Failed to fetch butler tasks. Status code: {response.status_code}",
-                    "response": response.text,
-                },
-                indent=4,
+            return ServerButlerTasksResponse(
+                status="error",
+                message=f"Failed to fetch butler tasks. Status code: {response.status_code}",
+                data=None,
+                raw_response=response.text,
             )
 
     except Exception as e:
         import traceback
 
-        return json.dumps(
-            {"status": "error", "message": str(e), "traceback": traceback.format_exc()}, indent=4
+        return ServerButlerTasksResponse(
+            status="error", message=str(e), data=None, raw_response=traceback.format_exc()
         )
 
 
-@mcp.tool()
-async def server_get_alerts(timeout: int = 15) -> str:
+@mcp.tool(
+    name="server_get_alerts",
+    description="Get real-time alerts from the Plex server by listening on a websocket",
+    tags={ToolTag.READ.value},
+    annotations=ToolAnnotations(readOnlyHint=True),
+)
+async def server_get_alerts(timeout: int = 15) -> ServerAlertsResponse | ErrorResponse:
     """Get real-time alerts from the Plex server by listening on a websocket.
 
     Args:
@@ -347,7 +396,7 @@ async def server_get_alerts(timeout: int = 15) -> str:
         plex = connect_to_plex()
 
         # Collection for alerts
-        alerts_data = []
+        alerts_data: list[dict[str, str | Any] | AlertInfo] = []
 
         # Define callback function to process alerts
         def alert_callback(data: Any) -> None:
@@ -395,13 +444,18 @@ async def server_get_alerts(timeout: int = 15) -> str:
         print(f"Alert listener stopped after {timeout} seconds.")
 
         # Format alerts as JSON
-        return json.dumps({"status": "success", "data": alerts_data}, indent=4)
+        return ServerAlertsResponse(status="success", data=alerts_data)
     except Exception as e:
-        return json.dumps({"status": "error", "message": str(e)}, indent=4)
+        return ErrorResponse(message=str(e))
 
 
-@mcp.tool()
-async def server_run_butler_task(task_name: str) -> str:
+@mcp.tool(
+    name="server_run_butler_task",
+    description="Manually run a specific Plex Butler task now",
+    tags={ToolTag.WRITE.value},
+    annotations=ToolAnnotations(idempotentHint=True),
+)
+async def server_run_butler_task(task_name: str) -> ServerRunButlerResponse | ErrorResponse:
     """Manually run a specific Plex Butler task now.
 
     Args:
@@ -438,9 +492,8 @@ async def server_run_butler_task(task_name: str) -> str:
 
         # Add 202 Accepted to the list of successful status codes
         if response.status_code in [200, 201, 202, 204]:
-            return json.dumps(
-                {"status": "success", "message": f"Butler task '{task_name}' started successfully"},
-                indent=4,
+            return ServerRunButlerResponse(
+                status="success", message=f"Butler task '{task_name}' started successfully"
             )
         else:
             # For error responses, extract the status code and response text in a more readable format
@@ -460,11 +513,11 @@ async def server_run_butler_task(task_name: str) -> str:
                 if h1_match and h1_match.group(1):
                     error_message = f"Failed to run butler task: {h1_match.group(1)}"
 
-            return json.dumps({"status": "error", "message": error_message}, indent=4)
+            return ServerRunButlerResponse(status="error", message=error_message)
 
     except Exception as e:
         import traceback
 
-        return json.dumps(
-            {"status": "error", "message": str(e), "traceback": traceback.format_exc()}, indent=4
+        return ServerRunButlerResponse(
+            status="error", message=str(e), traceback=traceback.format_exc()
         )
